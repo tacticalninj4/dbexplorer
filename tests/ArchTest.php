@@ -2,7 +2,10 @@
 
 declare(strict_types=1);
 
-if (! function_exists('arch')) {
+use Pest\ArchPresets\Php;
+
+// Arch presets need Pest 3+. Pest 1 has no arch() and Pest 2 has no presets, so those lanes skip this file.
+if (! function_exists('arch') || ! class_exists(Php::class)) {
     return;
 }
 
