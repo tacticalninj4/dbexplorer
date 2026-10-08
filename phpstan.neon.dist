@@ -7,3 +7,9 @@ parameters:
         - database
         - routes
     tmpDir: build/phpstan
+    # Larastan only treats the host app's config_path() as config; the package config lives here.
+    configDirectories:
+        - config
+    type_coverage:
+        # Typed class constants need PHP 8.3; the source must stay PHP 8.0 compatible.
+        constant_type: 0

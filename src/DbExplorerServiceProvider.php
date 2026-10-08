@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace TacticalNinj4\DbExplorer;
 
 use Illuminate\Support\ServiceProvider;
+use TacticalNinj4\DbExplorer\Audit\AuditLog;
+use TacticalNinj4\DbExplorer\Console\AuditVerifyCommand;
+use TacticalNinj4\DbExplorer\Console\PruneCommand;
 
 class DbExplorerServiceProvider extends ServiceProvider
 {
@@ -16,6 +19,8 @@ class DbExplorerServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__.'/../config/dbexplorer.php', 'dbexplorer');
 
         $this->app->singleton(DbExplorer::class);
+
+        $this->app->singleton(AuditLog::class);
     }
 
     /**
@@ -34,6 +39,11 @@ class DbExplorerServiceProvider extends ServiceProvider
         if (! $this->app->runningInConsole()) {
             return;
         }
+
+        $this->commands([
+            AuditVerifyCommand::class,
+            PruneCommand::class,
+        ]);
 
         $this->publishes([
             __DIR__.'/../config/dbexplorer.php' => config_path('dbexplorer.php'),
