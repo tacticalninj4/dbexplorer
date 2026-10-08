@@ -9,6 +9,9 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
+use TacticalNinj4\DbExplorer\Audit\AuditLog;
+use TacticalNinj4\DbExplorer\Console\AuditVerifyCommand;
+use TacticalNinj4\DbExplorer\Console\PruneCommand;
 use TacticalNinj4\DbExplorer\Http\Middleware\Authorize;
 use TacticalNinj4\DbExplorer\Http\Middleware\ContentSecurityPolicy;
 use TacticalNinj4\DbExplorer\Http\Middleware\IpAllowlist;
@@ -24,6 +27,8 @@ class DbExplorerServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__.'/../config/dbexplorer.php', 'dbexplorer');
 
         $this->app->singleton(DbExplorer::class);
+
+        $this->app->singleton(AuditLog::class);
     }
 
     /**
@@ -45,6 +50,11 @@ class DbExplorerServiceProvider extends ServiceProvider
         if (! $this->app->runningInConsole()) {
             return;
         }
+
+        $this->commands([
+            AuditVerifyCommand::class,
+            PruneCommand::class,
+        ]);
 
         $this->publishes([
             __DIR__.'/../config/dbexplorer.php' => config_path('dbexplorer.php'),
