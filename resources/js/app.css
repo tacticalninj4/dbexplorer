@@ -1,0 +1,13 @@
+/* Only scan the SPA source: dist/, docs and PHP must not leak classes in. */
+@import "tailwindcss" source(none);
+@source "./";
+
+@layer base {
+    :root {
+        color-scheme: light dark;
+    }
+
+    body {
+        @apply min-h-screen bg-zinc-50 text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
+    }
+}

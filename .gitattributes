@@ -15,3 +15,10 @@
 /CLAUDE.md          export-ignore
 /AGENTS.md          export-ignore
 /AGENTS_PACKAGE.md  export-ignore
+/node_modules       export-ignore
+/resources/js       export-ignore
+/package.json       export-ignore
+/package-lock.json  export-ignore
+/vite.config.ts     export-ignore
+/eslint.config.js   export-ignore
+/tsconfig.json      export-ignore
