@@ -102,26 +102,49 @@ DB_PGSQL_PASSWORD=secret
 
 Without `DB_PGSQL_HOST`, the `pgsql` group is **skipped, not failed**, so contributors without Docker can still run everything else. CI always sets it, so skips can't hide failures there.
 
+The workbench uses the same Postgres when `DB_PGSQL_HOST` is set: `composer build` creates the roles and the `dbx_workbench` database, then seeds the test user and the fixture. You sign in as an admin on the `main` label:
+
+```bash
+export DB_PGSQL_HOST=127.0.0.1 DB_PGSQL_PORT=54320 DB_PGSQL_USERNAME=postgres DB_PGSQL_PASSWORD=secret
+composer build    # the fixture loads once, and again only when tests/fixtures/pgsql.sql changes
+composer serve    # then open /login, which signs you in and redirects to /dbexplorer
+```
+
+Without `DB_PGSQL_HOST` the workbench keeps SQLite.
+
 ### 3.2 What the test bootstrap creates
 It connects as the superuser and does the following, idempotently:
-1. Creates **cluster-wide login roles** (`CREATE ROLE … IF NOT EXISTS` through a `DO` block): `dbx_viewer`, `dbx_editor` and `dbx_admin`.
+1. Creates **cluster-wide login roles** through a `DO` block that holds an advisory lock, so parallel workers don't race: `dbx_viewer`, `dbx_editor` and `dbx_admin`, all with the password `dbx-test-password`.
 2. Creates a **database per parallel worker**, `dbx_test_{TEST_TOKEN}` (`dbx_test` when not parallel), with `dbx_admin` as owner.
-3. Loads the **fixture** (`tests/fixtures/pgsql.sql`, shared with the workbench seeder) into schema `fixture`:
+3. Loads the **fixture** (`tests/fixtures/pgsql.sql`, shared with the workbench seeder) into schema `fixture`. It records the file's SHA-1 in the database comment and skips the load while that matches, so the 1M rows are generated once per worker database, not on every run:
    - tables with and without a PK
    - a composite PK
    - a view, a materialized view, a partitioned table, a sequence
    - an enum, a domain, a composite type
    - a SQL function and a plpgsql function, including `sneaky()`, which writes when called
    - a trigger
-   - jsonb, array, bytea, timestamptz and long-text columns
+   - jsonb, array, bytea, timestamptz, numeric, uuid, citext and long-text columns
+   - comments on tables and columns, check, unique and foreign-key constraints, and partial, expression and GIN indexes
+   - the `citext` extension, installed in `fixture`
    - `fixture.big`, with 1M rows from `generate_series`
-   - hidden-object targets (`fixture.secrets`) and masking targets (`users.password`, `api_token`)
-4. Grants: `dbx_viewer` gets SELECT on `fixture`. `dbx_editor` gets SELECT/INSERT/UPDATE/DELETE with no DDL. `dbx_admin` owns everything.
+   - hidden-object targets (`fixture.secrets`, and the view `fixture.secret_labels` over it) and masking targets (`users.password`, `api_token`)
+4. Grants: `dbx_viewer` gets USAGE and SELECT on `fixture`. `dbx_editor` gets SELECT/INSERT/UPDATE/DELETE and sequence USAGE, with no CREATE. `dbx_admin` owns everything. Functions keep the default EXECUTE for PUBLIC, so `fixture.sneaky()` fails for the viewer on the UPDATE inside it (SQLSTATE 42501).
 5. Registers three Laravel connections, `pgsql_viewer`, `pgsql_editor` and `pgsql_admin`, plus a `pgsql_super` used only by test setup and assertions. They're mapped through `dbexplorer.connections.main.{viewer,editor,admin}` exactly as an app would configure them.
 
-The fixture is loaded **once per worker** and treated as read-only. Tests that change data or schema work in a **per-test scratch schema** (`t_<random>`), which is created in `beforeEach` and dropped in `afterEach`. We can't use `DatabaseTransactions` because QueryRunner manages its own transactions on the same PDO.
+The fixture is loaded **once per worker** and treated as read-only. Tests that change data or schema work in a **per-test scratch schema** (`t_<random>`): `$this->scratchSchema()` creates it on first call (typically in `beforeEach`), and it's dropped after the test. It's owned by `dbx_admin`, and tables `pgsql_admin` creates in it are readable by the viewer and writable by the editor. We can't use `DatabaseTransactions` because QueryRunner manages its own transactions on the same PDO.
 
-The metadata store (`dbx_*` tables) for pgsql tests lives in the worker database, schema `public`. A child process (the queue worker in §4) can see it there. SQLite `:memory:` couldn't be shared with a child process.
+```php
+beforeEach(function () {
+    $this->schema = $this->scratchSchema();
+    DB::connection('pgsql_admin')->statement("CREATE TABLE {$this->schema}.notes (id bigserial PRIMARY KEY, body text)");
+});
+
+it('denies viewer writes', function () {
+    expect(sqlState(fn () => DB::connection('pgsql_viewer')->delete("DELETE FROM {$this->schema}.notes")))->toBe('42501');
+});
+```
+
+The metadata store (`dbx_*` tables) for pgsql tests lives in the worker database, schema `public`. A child process (the queue worker in §4) can see it there. SQLite `:memory:` couldn't be shared with a child process. `migrate:fresh` runs before every test, and it only wipes the connection's `search_path` (`public`), so the fixture survives it.
 
 ### 3.3 CI
 - Linux lanes run a `postgres` service container: **12** on the Laravel 9 lanes (oldest supported) and **18** on the rest.
