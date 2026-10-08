@@ -95,6 +95,7 @@ These requirements are non-negotiable, and each needs automated tests.
 - **S17** Every action that touches data or schema is written to `dbx_audit_log`: user, role, connection, IP, user agent, SQL text (masked bound values), classification, duration, row count, outcome and error. This covers queries, edits, DDL, exports, imports, scripts, schedules, backups, unmasking and session kills.
 - **S18** The audit log is append-only from the package. There are no update or delete routes. Pruning happens only through `dbx:prune` with a configurable retention period, 90 days by default.
 - **S19** Optional: forward audit events to a Laravel log channel so they reach a SIEM.
+- **S22** Audit rows form an HMAC hash chain, keyed by `audit.key` with `APP_KEY` as fallback. `dbx:audit:verify` detects edited, deleted or reordered rows. Deleting the newest rows is only detectable through S19 forwarding.
 
 ### 6.5 Process safety
 - **S20** `pg_dump` runs through Symfony `Process` with an argument array, never a shell string. The password goes in `PGPASSWORD` in the process environment and never in the arguments.
@@ -272,10 +273,11 @@ Each milestone can be released on its own as a tagged pre-release.
 | A queue that isn't running makes background features look broken | Show a heartbeat check in the UI ("no worker has picked up a job in N min"). |
 | Masking misses a sensitive column | The default rules are conservative, the docs tell users to audit their schema, and admins see a "columns not masked" report. |
 
-## 14. Open questions
+## 14. Decisions (formerly open questions)
 
-1. Should the Vue SPA be served straight from the vendor directory through a route, Horizon-style, or require `vendor:publish`? Publishing means a stale-asset risk after upgrades.
-2. Should audit log rows be hash-chained so tampering can be detected, or is append-only plus SIEM forwarding enough?
-3. Should viewers be allowed to export tables that have masked columns, or only admins?
-4. Should saved and scheduled queries be scoped per team or tenant for multi-tenant host apps?
-5. Should the package expose events such as `QueryExecuted` and `RunFinished` so hosts can hook in?
+All resolved on 2026-10-09:
+1. ~~Asset serving~~ → served from the package through a route, with no publish step.
+2. ~~Audit hash chain~~ → yes (S22).
+3. ~~Masked exports by viewers~~ → allowed, with masking applied in the file.
+4. ~~Tenant scoping~~ → none in v1; per-user ownership.
+5. ~~Events~~ → yes: `QueryExecuted`, `RowChanged`, `DdlExecuted`, `RunFinished`, `ScheduleFailed`. Payloads are masked and never include connection config.
