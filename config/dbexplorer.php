@@ -106,7 +106,11 @@ return [
     |--------------------------------------------------------------------------
     |
     | Glob patterns for schemas and `schema.table` names to hide from
-    | browsing. Queries that reference them are rejected on a best-effort
+    | browsing. A pattern without a dot hides whole schemas; `schema.name`
+    | hides objects, and `schema.*` hides the schema too. Matching is
+    | case-sensitive. System schemas (pg_catalog, information_schema, ...)
+    | and objects the database login can't use are never shown anyway.
+    | Queries that reference hidden objects are rejected on a best-effort
     | basis only; revoke access in the database for real enforcement.
     |
     | `*.dbx_*` and `dbexplorer.*` keep DbExplorer's own tables (audit log,
