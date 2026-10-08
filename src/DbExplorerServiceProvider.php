@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use TacticalNinj4\DbExplorer\Http\Middleware\Authorize;
 use TacticalNinj4\DbExplorer\Http\Middleware\IpAllowlist;
+use TacticalNinj4\DbExplorer\Http\Middleware\ResolveRole;
 
 class DbExplorerServiceProvider extends ServiceProvider
 {
@@ -79,7 +80,7 @@ class DbExplorerServiceProvider extends ServiceProvider
             'middleware' => array_merge(
                 [IpAllowlist::class],
                 (array) config('dbexplorer.middleware', []),
-                [Authorize::class],
+                [Authorize::class, ResolveRole::class],
             ),
             'as' => 'dbexplorer.',
         ], function (): void {

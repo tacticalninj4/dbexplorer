@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Route;
 use TacticalNinj4\DbExplorer\Http\Middleware\Authorize;
 use TacticalNinj4\DbExplorer\Http\Middleware\IpAllowlist;
+use TacticalNinj4\DbExplorer\Http\Middleware\ResolveRole;
 use Workbench\App\Models\User;
 
 // S1: disabled by default, and disabled means not registered.
@@ -96,6 +97,7 @@ it('S3 applies the configured middleware stack in order', function () {
         'auth:web',
         'verified',
         Authorize::class,
+        ResolveRole::class,
     ]);
 });
 
