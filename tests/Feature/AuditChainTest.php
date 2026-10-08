@@ -147,7 +147,7 @@ it('S22 verifies the chain after dbx:prune and writes a checkpoint', function ()
     $checkpoint = DB::table('dbx_audit_log')->where('action', AuditLog::PRUNED)->sole();
     $meta = json_decode($checkpoint->meta, true);
 
-    expect(DB::table('dbx_audit_log')->orderBy('id')->pluck('id')->all())->toBe([6, 7])
+    expect(DB::table('dbx_audit_log')->orderBy('id')->pluck('id')->map(fn ($id) => (int) $id)->all())->toBe([6, 7])
         ->and($meta['through_id'])->toBe(5)
         ->and($meta['entries'])->toBe(5)
         ->and(DB::table('dbx_audit_log')->where('id', 6)->value('prev_hash'))->toBe($meta['anchor_hash'])

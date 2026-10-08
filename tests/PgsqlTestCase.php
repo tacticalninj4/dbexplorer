@@ -39,6 +39,8 @@ abstract class PgsqlTestCase extends TestCase
      */
     protected function defineEnvironment($app): void
     {
+        parent::defineEnvironment($app);
+
         if (! static::configured()) {
             return;
         }
