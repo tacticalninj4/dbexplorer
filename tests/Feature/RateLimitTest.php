@@ -60,3 +60,29 @@ it('S6 does not define the limiter while the package is disabled', function () {
 
     expect(RateLimiter::limiter('dbexplorer'))->toBeNull();
 });
+
+it('S6 throttles every per-connection API route with the dbexplorer limiter', function () {
+    $routes = array_filter(Route::getRoutes()->getRoutes(), fn ($route): bool => str_contains($route->uri(), '{label}'));
+
+    expect($routes)->toHaveCount(14);
+
+    foreach ($routes as $route) {
+        expect($route->gatherMiddleware())->toContain('throttle:dbexplorer');
+    }
+});
+
+it('S6 answers 429 on a per-connection API route once the user is over budget', function () {
+    app()['env'] = 'local';
+    config([
+        'dbexplorer.limits.queries_per_minute' => 2,
+        'dbexplorer.connections' => ['main' => ['viewer' => 'testing']],
+    ]);
+
+    // An invalid search fails validation before touching the database, yet still counts.
+    $this->actingAs(makeUser())->getJson('/dbexplorer/api/main/search')->assertStatus(422);
+    $this->actingAs(makeUser())->getJson('/dbexplorer/api/main/search')->assertStatus(422);
+    $this->actingAs(makeUser())->getJson('/dbexplorer/api/main/search')->assertStatus(429);
+
+    // Another user keeps their own budget.
+    $this->actingAs(makeUser(2))->getJson('/dbexplorer/api/main/search')->assertStatus(422);
+});
