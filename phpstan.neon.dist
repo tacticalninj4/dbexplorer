@@ -3,13 +3,12 @@ parameters:
     phpVersion: 80000
     paths:
         - src
-        - config
+        - %currentWorkingDirectory%/config
         - database
         - routes
     tmpDir: build/phpstan
-    # Larastan only treats the host app's config_path() as config; the package config lives here.
     configDirectories:
-        - config
+        - %currentWorkingDirectory%/config
+    # Typed class constants need PHP 8.3; the package supports PHP 8.0.
     type_coverage:
-        # Typed class constants need PHP 8.3; the source must stay PHP 8.0 compatible.
         constant_type: 0

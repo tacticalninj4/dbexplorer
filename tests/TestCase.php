@@ -10,6 +10,13 @@ use TacticalNinj4\DbExplorer\DbExplorerServiceProvider;
 
 abstract class TestCase extends Orchestra
 {
+    /**
+     * Config applied before the package boots, on top of the test defaults.
+     *
+     * @var array<string, mixed>
+     */
+    protected array $bootConfig = [];
+
     protected function getPackageProviders($app): array
     {
         return [
@@ -18,8 +25,8 @@ abstract class TestCase extends Orchestra
     }
 
     /**
-     * Feature tests keep the metadata store in SQLite :memory: (docs/TESTING.md §2).
-     * Set explicitly because Testbench 7 defaults to MySQL.
+     * Feature tests keep the metadata store in SQLite :memory: (docs/TESTING.md §2),
+     * set explicitly because Testbench 7 defaults to MySQL.
      *
      * @param  Application  $app
      */
@@ -32,5 +39,23 @@ abstract class TestCase extends Orchestra
             'prefix' => '',
             'foreign_key_constraints' => true,
         ]);
+        $app['config']->set('app.key', 'base64:'.base64_encode(str_repeat('k', 32)));
+        $app['config']->set('dbexplorer.enabled', true);
+        $app['config']->set($this->bootConfig);
+    }
+
+    /**
+     * Rebuild the application with config that must be set before the package
+     * boots, such as `enabled`, `path`, `domain` or `middleware`.
+     *
+     * @param  array<string, mixed>  $config
+     */
+    public function bootWith(array $config): static
+    {
+        $this->bootConfig = $config;
+
+        $this->refreshApplication();
+
+        return $this;
     }
 }
