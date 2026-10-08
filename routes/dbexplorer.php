@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Route;
 use TacticalNinj4\DbExplorer\Http\Controllers\AssetController;
 use TacticalNinj4\DbExplorer\Http\Controllers\MeController;
 use TacticalNinj4\DbExplorer\Http\Controllers\ObjectsController;
+use TacticalNinj4\DbExplorer\Http\Controllers\QueryController;
 use TacticalNinj4\DbExplorer\Http\Controllers\RowsController;
 use TacticalNinj4\DbExplorer\Http\Controllers\ShellController;
 
@@ -34,6 +35,8 @@ Route::prefix('api/{label}')->middleware('throttle:dbexplorer')->group(function 
     Route::get('objects/{schema}/{name}/definition', [ObjectsController::class, 'definition'])->name('object.definition');
     Route::get('functions/{schema}/{signature}', [ObjectsController::class, 'showFunction'])->name('function');
     Route::get('rows/{schema}/{name}', RowsController::class)->name('rows');
+    Route::post('query', [QueryController::class, 'run'])->name('query');
+    Route::get('history', [QueryController::class, 'history'])->name('history');
 });
 
 Route::get('assets/{path}', AssetController::class)->where('path', '.+')->name('asset');

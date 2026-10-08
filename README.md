@@ -152,10 +152,11 @@ All keys live in `config/dbexplorer.php`.
 | `middleware` | `['web', 'auth']` | Middleware for every route. Keep an auth middleware in it. |
 | `ip_allowlist` | `[]` | IPs or CIDR ranges allowed in. Empty allows any IP. |
 | `connections` | `main` → `pgsql_readonly` / `pgsql_editor` / `pgsql` | Label → role → Laravel connection. The only databases DbExplorer can reach. |
-| `limits.{viewer,editor,admin}.timeout` | `30` / `60` / `120` | Statement timeout in seconds per role *(planned, M1)*. |
-| `limits.{viewer,editor,admin}.rows` | `1000` / `5000` / `10000` | Maximum rows returned per role *(planned, M1)*. |
+| `limits.{viewer,editor,admin}.timeout` | `30` / `60` / `120` | Statement timeout in seconds per role. |
+| `limits.{viewer,editor,admin}.rows` | `1000` / `5000` / `10000` | Maximum rows returned per role, and the largest grid page. |
 | `limits.background.timeout` | `3600` | Statement timeout in seconds for queued jobs *(planned, M3)*. |
-| `limits.queries_per_minute` | `60` | The `dbexplorer` rate limiter, per user or per IP, for query execution *(planned, M1)*. |
+| `limits.queries_per_minute` | `60` | The `dbexplorer` rate limiter, per user or per IP, for every per-connection API call (browsing, rows, queries, history). |
+| `limits.sql_length` | `100000` | Maximum characters of SQL the editor may submit. |
 | `hidden` | `pg_toast*`, `*.password_reset*`, `*.personal_access_tokens`, `*.dbx_*`, `dbexplorer.*` | Globs for schemas and tables hidden from browsing, including DbExplorer's own tables *(planned, M1)*. |
 | `masking` | `*.password`, `*.*token*`, `*.*secret*` | Globs for `table.column` values masked in grids and exports *(planned, M1)*. |
 | `queue.connection` | `null` | Queue connection for background work; null uses the app default *(planned, M3)*. |

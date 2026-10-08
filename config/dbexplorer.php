@@ -88,7 +88,8 @@ return [
     | timeout in seconds and `rows` the maximum rows returned. `background`
     | holds the timeout in seconds for queued jobs (exports, imports, scripts).
     | `queries_per_minute` feeds the `dbexplorer` rate limiter, applied per
-    | user (or per IP for guests) to query execution.
+    | user (or per IP for guests) to every per-connection API call.
+    | `sql_length` caps the characters of SQL the editor may submit.
     |
     */
 
@@ -98,6 +99,7 @@ return [
         'admin' => ['timeout' => 120, 'rows' => 10000],
         'background' => ['timeout' => 3600],
         'queries_per_minute' => 60,
+        'sql_length' => 100000,
     ],
 
     /*

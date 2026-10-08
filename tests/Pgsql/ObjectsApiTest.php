@@ -154,8 +154,7 @@ it('round-trips object names with dots, spaces, quotes and non-ASCII characters'
         ->and(apiAs($this, 'viewer', "objects/{$path}/columns")->assertOk()->json('data.0.name'))->toBe($name)
         ->and(apiAs($this, 'viewer', "objects/{$path}/ddl")->assertOk()->json('data.ddl'))->toContain($quoted);
 
-    // Validation passes with the odd column as sort column; only execution is pending (M1.6).
-    apiAs($this, 'viewer', "rows/{$path}?sort=".rawurlencode($name))->assertStatus(501);
+    expect(apiAs($this, 'viewer', "rows/{$path}?sort=".rawurlencode($name))->assertOk()->json('data.columns.0.name'))->toBe($name);
 })->with([
     'dots' => 'v1.2.table',
     'space' => 'with space',

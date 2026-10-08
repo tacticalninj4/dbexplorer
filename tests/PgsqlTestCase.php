@@ -44,6 +44,14 @@ abstract class PgsqlTestCase extends TestCase
     {
         $this->dropScratchSchema();
 
+        // Close the logins now: an app that isn't garbage-collected yet would
+        // keep them open, and parallel workers would run out of server slots.
+        if (static::configured()) {
+            foreach (['pgsql_viewer', 'pgsql_editor', 'pgsql_admin', 'pgsql_super'] as $connection) {
+                DB::disconnect($connection);
+            }
+        }
+
         parent::tearDown();
     }
 

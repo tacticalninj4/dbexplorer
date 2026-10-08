@@ -7,6 +7,9 @@ use Illuminate\Support\Facades\DB;
 use TacticalNinj4\DbExplorer\Drivers\Postgres\Introspector;
 use TacticalNinj4\DbExplorer\Drivers\Postgres\RowsQuery;
 use TacticalNinj4\DbExplorer\Facades\DbExplorer;
+use TacticalNinj4\DbExplorer\Models\AuditEntry;
+use TacticalNinj4\DbExplorer\Security\Masker;
+use TacticalNinj4\DbExplorer\Tests\PgsqlTestCase;
 
 /**
  * Build a page with RowsQuery for a relation as the viewer's login sees it,
@@ -221,8 +224,8 @@ it('S12 sorts and filters on odd column names', function () {
     expect($pages)->toBe(4)->and(array_column($rows, 'key "q"'))->toBe([8, 5, 7, 4, 9, 6, 3]);
 });
 
-// HTTP: validation and lookups happen before any row query. Execution waits
-// for the QueryRunner (M1.6), so a valid request answers 501 for now.
+// HTTP: validation and lookups happen before any row query, which then runs
+// through the QueryRunner.
 
 it('S12 rejects injection attempts with 422 before any row query runs', function (string $query, string $field) {
     app()['env'] = 'local';
@@ -266,7 +269,7 @@ it('bounds the page size by the role row limit', function () {
     DbExplorer::roleUsing(fn (): string => 'editor');
 
     $this->actingAs(makeUser())->getJson('/dbexplorer/api/main/rows/fixture/posts?limit=51')->assertStatus(422)->assertJsonValidationErrors('limit');
-    $this->actingAs(makeUser())->getJson('/dbexplorer/api/main/rows/fixture/posts?limit=50')->assertStatus(501);
+    expect($this->actingAs(makeUser())->getJson('/dbexplorer/api/main/rows/fixture/posts?limit=50')->assertOk()->json('data.rows'))->toHaveCount(50);
 });
 
 it('answers 404 for relations that have no rows to browse', function (string $name) {
@@ -276,3 +279,84 @@ it('answers 404 for relations that have no rows to browse', function (string $na
         ->assertNotFound()
         ->assertExactJson(['message' => 'The database object does not exist.']);
 })->with(['missing' => 'nope', 'sequence' => 'ticket_seq', 'type' => 'mood', 'function' => 'post_count']);
+
+/**
+ * GET a rows page through the API as $role.
+ *
+ * @return array<string, mixed>
+ */
+function rowsApi(PgsqlTestCase $test, string $path, string $role = 'viewer'): array
+{
+    app()['env'] = 'local';
+    DbExplorer::roleUsing(fn (): string => $role);
+
+    return $test->actingAs(makeUser())->getJson('/dbexplorer/api/main/rows/'.$path)->assertOk()->json('data');
+}
+
+it('S14 serves rows with masked columns masked for every role', function (string $role) {
+    $data = rowsApi($this, 'fixture/users?limit=2', $role);
+    $columns = array_column($data['columns'], 'masked', 'name');
+
+    expect($columns)->toMatchArray(['id' => false, 'email' => false, 'password' => true, 'api_token' => true])
+        ->and($data['rows'])->toHaveCount(2)
+        ->and($data['rows'][0][1])->toBe('Alice@Example.com')
+        ->and($data['rows'][0][3])->toBe(Masker::MASK)
+        ->and($data['rows'][0][4])->toBe(Masker::MASK)
+        ->and($data['pagination'])->toBe('keyset')
+        ->and($data['truncated'])->toBeTrue()
+        ->and($data['count'])->toBe(['value' => 3, 'exact' => false])
+        ->and(json_encode($data))->not->toContain('aliceHash')->not->toContain('tok_alice');
+})->with(['viewer', 'editor', 'admin']);
+
+it('S12 pages fixture.big through the API by cursor with no duplicates or gaps', function () {
+    $ids = [];
+    $query = 'limit=1000';
+
+    for ($page = 0; $page < 3; $page++) {
+        $data = rowsApi($this, 'fixture/big?'.$query);
+        $ids = array_merge($ids, array_column($data['rows'], 0));
+        $query = 'limit=1000&cursor='.$data['next_cursor'];
+    }
+
+    expect($ids)->toBe(range(1, 3000));
+});
+
+it('pages a nullable sort column through the API to the last page', function () {
+    $ids = [];
+    $query = 'limit=9&sort=published_at&direction=desc';
+    $pages = 0;
+
+    do {
+        $data = rowsApi($this, 'fixture/posts?'.$query);
+        $ids = array_merge($ids, array_column($data['rows'], 0));
+        $query = 'limit=9&sort=published_at&direction=desc&cursor='.$data['next_cursor'];
+        $pages++;
+    } while ($data['next_cursor'] !== null);
+
+    expect($pages)->toBe(6)
+        ->and($data['truncated'])->toBeFalse()
+        ->and($ids)->toBe(pluckIds('SELECT id FROM fixture.posts ORDER BY published_at DESC NULLS LAST, id DESC'));
+});
+
+it('pages a table without a key through the API by offset', function () {
+    $first = rowsApi($this, 'fixture/event_log?limit=6');
+    $second = rowsApi($this, 'fixture/event_log?limit=6&offset='.$first['next_offset']);
+
+    expect($first['pagination'])->toBe('offset')
+        ->and($first['next_offset'])->toBe(6)
+        ->and($second['next_offset'])->toBeNull()
+        ->and(array_merge(array_column($first['rows'], 1), array_column($second['rows'], 1)))->toBe(range(1, 10));
+});
+
+it('S17 audits each row query and counts exactly on request', function () {
+    $data = rowsApi($this, 'fixture/big?limit=5&exact=1&filters[0][column]=n&filters[0][op]==&filters[0][value]=7');
+
+    $entries = AuditEntry::query()->where('action', 'query')->orderBy('id')->get();
+
+    expect($data['count'])->toBe(['value' => 1000, 'exact' => true])
+        ->and($entries)->toHaveCount(2)
+        ->and($entries->pluck('label')->all())->toBe(['main', 'main'])
+        ->and($entries->pluck('role')->all())->toBe(['viewer', 'viewer'])
+        ->and($entries[0]->sql)->toContain('FROM "fixture"."big" WHERE ("n" = ?)')
+        ->and($entries[1]->sql)->toStartWith('SELECT count(*)');
+});
