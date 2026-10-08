@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\QueryException;
 use TacticalNinj4\DbExplorer\Tests\PgsqlTestCase;
 use TacticalNinj4\DbExplorer\Tests\TestCase;
 use Workbench\App\Models\User;
@@ -20,4 +21,18 @@ function makeUser(int $id = 1, string $email = 'dev@example.com'): User
     $user->forceFill(['id' => $id, 'name' => 'Dev', 'email' => $email]);
 
     return $user;
+}
+
+/**
+ * The SQLSTATE that $callback's query fails with, or null when it succeeds.
+ */
+function sqlState(callable $callback): ?string
+{
+    try {
+        $callback();
+    } catch (QueryException $e) {
+        return (string) $e->getCode();
+    }
+
+    return null;
 }
