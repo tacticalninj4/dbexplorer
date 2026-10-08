@@ -4,7 +4,14 @@ declare(strict_types=1);
 
 namespace TacticalNinj4\DbExplorer;
 
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
+use TacticalNinj4\DbExplorer\Http\Middleware\Authorize;
+use TacticalNinj4\DbExplorer\Http\Middleware\IpAllowlist;
+use TacticalNinj4\DbExplorer\Http\Middleware\ResolveRole;
 
 class DbExplorerServiceProvider extends ServiceProvider
 {
@@ -23,7 +30,10 @@ class DbExplorerServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        $this->loadRoutesFrom(__DIR__.'/../routes/dbexplorer.php');
+        // Disabled means no routes at all, so every DbExplorer URL is a 404 (S1).
+        if ((bool) config('dbexplorer.enabled')) {
+            $this->registerRoutes();
+        }
 
         $this->loadViewsFrom(__DIR__.'/../resources/views', 'dbexplorer');
 
@@ -50,5 +60,31 @@ class DbExplorerServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__.'/../database/migrations' => database_path('migrations'),
         ], ['dbexplorer', 'dbexplorer-migrations']);
+    }
+
+    /**
+     * Register the routes and the `dbexplorer` rate limiter.
+     */
+    protected function registerRoutes(): void
+    {
+        RateLimiter::for('dbexplorer', function (Request $request): Limit {
+            $user = $request->user();
+            $key = $user !== null ? 'user:'.$user->getAuthIdentifier() : 'ip:'.$request->ip();
+
+            return Limit::perMinute((int) config('dbexplorer.limits.queries_per_minute', 60))->by($key);
+        });
+
+        Route::group([
+            'domain' => config('dbexplorer.domain'),
+            'prefix' => config('dbexplorer.path', 'dbexplorer'),
+            'middleware' => array_merge(
+                [IpAllowlist::class],
+                (array) config('dbexplorer.middleware', []),
+                [Authorize::class, ResolveRole::class],
+            ),
+            'as' => 'dbexplorer.',
+        ], function (): void {
+            $this->loadRoutesFrom(__DIR__.'/../routes/dbexplorer.php');
+        });
     }
 }

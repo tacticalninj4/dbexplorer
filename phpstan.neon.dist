@@ -3,7 +3,12 @@ parameters:
     phpVersion: 80000
     paths:
         - src
-        - config
+        - %currentWorkingDirectory%/config
         - database
         - routes
     tmpDir: build/phpstan
+    configDirectories:
+        - %currentWorkingDirectory%/config
+    # Typed class constants need PHP 8.3; the package supports PHP 8.0.
+    type_coverage:
+        constant_type: 0
