@@ -47,6 +47,9 @@ use Throwable;
  * 6. COMMIT for editors and admins. ROLLBACK for viewers (a read-only
  *    transaction has nothing to commit, and rolling back also undoes any
  *    session `SET` it ran), for `EXPLAIN` and the `analyze` option, and on any error.
+ * 7. Once the transaction is closed, `DISCARD ALL`, then the session settings
+ *    from before the run are restored (see resetSession()). A connection that
+ *    already has an open transaction is refused, never joined.
  *
  * The classifier is UX only (S11): it picks the cursor path and labels the run.
  * The database login and the transaction mode are the enforcement.
@@ -164,8 +167,8 @@ final class QueryRunner
     }
 
     /**
-     * Steps 1–7 on the raw PDO. The connection is left clean whatever happens:
-     * no open transaction, no cursor, and the timeout gone with the transaction.
+     * Run on the raw PDO and leave the session as it was found, whatever happens:
+     * no open transaction, and no state the statement left behind.
      *
      * @param  array<int|string, scalar|null>  $bindings
      * @return array{columns: list<array{name: string, type: string, masked: bool}>, rows: list<list<mixed>>, affected: int|null, truncated: bool, notices: list<string>, noticesSupported: bool}
@@ -184,6 +187,24 @@ final class QueryRunner
             throw new QueryFailed('The connection already has an open transaction.', '25001');
         }
 
+        $settings = $this->sessionSettings($pdo, $name);
+
+        try {
+            return $this->transaction($connection, $pdo, $sql, $bindings, $role, $timeout, $cap, $explain, $unmask);
+        } finally {
+            // The transaction's statements are gone by now, so DISCARD can't pull a live one away.
+            $this->resetSession($pdo, $name, $settings);
+        }
+    }
+
+    /**
+     * Steps 1–6, in one transaction that is always closed on return.
+     *
+     * @param  array<int|string, scalar|null>  $bindings
+     * @return array{columns: list<array{name: string, type: string, masked: bool}>, rows: list<list<mixed>>, affected: int|null, truncated: bool, notices: list<string>, noticesSupported: bool}
+     */
+    private function transaction(Connection $connection, PDO $pdo, string $sql, array $bindings, string $role, int $timeout, int $cap, ?string $explain, bool $unmask): array
+    {
         $readOnly = $role === Role::VIEWER;
         $commit = ! $readOnly && $explain === null && $this->leadingKeyword($sql) !== 'EXPLAIN';
         $notices = [];
@@ -513,10 +534,56 @@ final class QueryRunner
                 return;
             }
         } catch (Throwable) {
-            // Fall through to disconnect.
+            // Fall through to purge.
         }
 
-        $connection->disconnect();
+        $this->db->purge($connection->getName());
+    }
+
+    /**
+     * The settings the session itself changed (`SET`, including Laravel's own
+     * search_path, timezone and isolation level from connect), as name => value.
+     */
+    private function sessionSettings(PDO $pdo, string $name): ?string
+    {
+        try {
+            $statement = $this->prepare($pdo, "SELECT json_object_agg(name, setting) FROM pg_catalog.pg_settings WHERE source = 'session'");
+            $statement->execute();
+            $settings = $statement->fetchColumn();
+        } catch (Throwable) {
+            $this->db->purge($name);
+
+            throw new QueryFailed('Could not read the connection settings.', '08006');
+        }
+
+        return is_string($settings) ? $settings : null;
+    }
+
+    /**
+     * Undo whatever session state the statement left behind, across roles and
+     * outcomes: `DISCARD ALL` drops prepared statements, `WITH HOLD` cursors,
+     * `LISTEN`s, advisory locks, temp tables and `SET ROLE` / session `SET`s,
+     * then the settings the session had before the run are put back. Under
+     * Octane or a queue worker the PDO serves the next user too.
+     *
+     * Fails closed: when any of it fails, the connection is purged, so the next
+     * use reconnects from scratch.
+     */
+    private function resetSession(PDO $pdo, string $name, ?string $settings): void
+    {
+        try {
+            if ($pdo->inTransaction()) {
+                $pdo->exec('ROLLBACK');
+            }
+
+            $pdo->exec('DISCARD ALL');
+
+            if ($settings !== null) {
+                $this->prepare($pdo, 'SELECT count(pg_catalog.set_config(key, value, false)) FROM pg_catalog.json_each_text(CAST(? AS json))')->execute([$settings]);
+            }
+        } catch (Throwable) {
+            $this->db->purge($name);
+        }
     }
 
     /**

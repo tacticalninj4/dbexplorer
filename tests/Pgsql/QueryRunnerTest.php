@@ -437,3 +437,80 @@ it('captures NOTICEs when the PDO supports it', function () {
     // Only the statement's own notices, and the callback is removed afterwards.
     expect(runQuery('pgsql_admin', 'SELECT 1', 'admin')->notices)->toBe([]);
 });
+
+it('does not leak a prepared statement into the next run, even after a viewer rollback', function () {
+    runQuery('pgsql_viewer', 'PREPARE dbx_leak AS SELECT 1', 'viewer');
+
+    expect(runFailure('pgsql_viewer', 'EXECUTE dbx_leak', 'viewer')?->sqlState)->toBe('26000')
+        ->and((int) DB::connection('pgsql_viewer')->getPdo()->query("SELECT count(*) FROM pg_prepared_statements WHERE name NOT LIKE 'pdo_stmt_%'")->fetchColumn())->toBe(0);
+});
+
+it('does not leak SET ROLE into the next run', function () {
+    $login = config('database.connections.pgsql_super.username');
+
+    runQuery('pgsql_super', 'SET ROLE dbx_viewer', 'admin');
+
+    expect(runQuery('pgsql_super', 'SELECT current_user, session_user', 'admin')->rows)->toBe([[$login, $login]])
+        ->and(DB::connection('pgsql_super')->selectOne('SELECT current_user AS u')->u)->toBe($login);
+});
+
+it('does not leak session settings, WITH HOLD cursors or LISTEN, and keeps the connection settings', function () {
+    config(['database.connections.pgsql_tokyo' => config('database.connections.pgsql_editor') + ['timezone' => 'Asia/Tokyo']]);
+    $connection = DB::connection('pgsql_tokyo');
+    $pdo = $connection->getPdo();
+    $path = $pdo->query('SHOW search_path')->fetchColumn();
+
+    runQuery('pgsql_tokyo', 'SET search_path = fixture', 'editor');
+    runQuery('pgsql_tokyo', "SET TIME ZONE 'UTC'", 'editor');
+    runQuery('pgsql_tokyo', 'DECLARE dbx_held CURSOR WITH HOLD FOR SELECT 1', 'editor');
+    runQuery('pgsql_tokyo', 'LISTEN dbx_channel', 'editor');
+    runFailure('pgsql_tokyo', 'SET search_path = fixture; SELECT 1', 'editor');
+
+    expect($pdo->query('SHOW search_path')->fetchColumn())->toBe($path)
+        ->and($pdo->query('SHOW timezone')->fetchColumn())->toBe('Asia/Tokyo')
+        ->and((int) $pdo->query("SELECT count(*) FROM pg_cursors WHERE name <> ''")->fetchColumn())->toBe(0)
+        ->and((int) $pdo->query('SELECT count(*) FROM pg_listening_channels()')->fetchColumn())->toBe(0);
+});
+
+it('keeps Laravel queries working on the same connection after runs', function (array $options) {
+    config(['database.connections.pgsql_reuse' => config('database.connections.pgsql_editor') + ['options' => $options]]);
+    $connection = DB::connection('pgsql_reuse');
+
+    expect($connection->select('SELECT ?::int AS x', [1])[0]->x)->toBe(1);
+
+    runQuery('pgsql_reuse', 'SELECT 1', 'editor');
+    $first = $connection->select('SELECT ?::int AS x', [2])[0]->x;
+    runFailure('pgsql_reuse', 'SELECT nope', 'editor');
+    $statement = $connection->getPdo()->prepare('SELECT ?::int');
+    runQuery('pgsql_reuse', 'SELECT 2', 'editor');
+
+    expect($first)->toBe(2)
+        ->and($connection->select('SELECT ?::int AS x', [3])[0]->x)->toBe(3)
+        ->and($connection->table("{$this->schema}.notes")->where('id', 1)->value('body'))->toBe('one');
+
+    unset($statement);
+
+    expect($connection->select('SELECT 4 AS x')[0]->x)->toBe(4);
+})->with([
+    'native prepares' => [[PDO::ATTR_EMULATE_PREPARES => false]],
+    'emulated prepares' => [[PDO::ATTR_EMULATE_PREPARES => true]],
+]);
+
+it('refuses to join a transaction opened on the raw PDO, and leaves it alone', function () {
+    $pdo = DB::connection('pgsql_editor')->getPdo();
+    $pdo->exec('BEGIN');
+    $pdo->exec("SET LOCAL application_name = 'host'");
+
+    try {
+        $e = runFailure('pgsql_editor', "DELETE FROM {$this->schema}.notes", 'editor');
+        $open = $pdo->inTransaction();
+        $name = $pdo->query('SHOW application_name')->fetchColumn();
+    } finally {
+        $pdo->exec('ROLLBACK');
+    }
+
+    expect($e?->getMessage())->toBe('The connection already has an open transaction.')
+        ->and($open)->toBeTrue()
+        ->and($name)->toBe('host')
+        ->and(noteCount($this->schema))->toBe(3);
+});

@@ -35,7 +35,7 @@ Every request passes these in order. Each one assumes the ones before it can fai
 | 3 | `viewDbExplorer` gate | Decides who may enter at all. Without a gate, only the `local` environment gets in. |
 | 4 | Role and connection allowlist | `DbExplorer::roleUsing()` maps the user to `viewer`, `editor`, `admin` or no access, per connection label. Only labels in `dbexplorer.connections` exist, and each role uses its own Laravel connection. |
 | 5 | Database login | Each of those connections logs in as a PostgreSQL role holding only that role's privileges (§3). **This is the boundary.** |
-| 6 | Query limits | One statement per query via a native prepare, viewer queries in `BEGIN READ ONLY` (always rolled back), a transaction-local `statement_timeout` and a row cap per role, reads streamed through a server-side cursor. |
+| 6 | Query limits | One statement per query via a native prepare, viewer queries in `BEGIN READ ONLY` (always rolled back), a transaction-local `statement_timeout` and a row cap per role, reads streamed through a server-side cursor. After every query the connection runs `DISCARD ALL` and gets its own settings back, so prepared statements, cursors, `SET ROLE` and other session state never reach the next user (it also drops temp tables, so give DbExplorer its own connections). A connection with an open transaction is refused. |
 | 7 | Audit log | Every action is written to an HMAC hash-chained log (§5), optionally forwarded to a log channel. |
 
 ## 3. PostgreSQL roles
