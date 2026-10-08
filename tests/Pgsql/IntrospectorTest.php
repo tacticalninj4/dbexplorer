@@ -547,3 +547,57 @@ it('lists a schema with 500 tables quickly', function () {
     expect($objects)->toHaveCount(500)
         ->and($timings[2])->toBeLessThan(1500);
 });
+
+it('S13 redacts foreign keys to hidden tables in constraints and DDL', function () {
+    config(['dbexplorer.hidden' => ['fixture.users']]);
+
+    $constraints = collect(introspector()->constraints('fixture', 'posts'))->keyBy('name');
+    $ddl = introspector()->tableDdl('fixture', 'posts');
+
+    expect($constraints['posts_user_id_fkey'])->toBe([
+        'name' => 'posts_user_id_fkey',
+        'type' => 'foreign_key',
+        'definition' => 'FOREIGN KEY (user_id) REFERENCES <hidden>',
+        'columns' => ['user_id'],
+        'references' => null,
+    ])
+        ->and(json_encode($constraints->all()))->not->toContain('users')
+        ->and($ddl)->not->toContain('users')
+        ->and($ddl)->toContain("\n\n-- Constraint posts_user_id_fkey is omitted: it references a hidden table.\n\n")
+        ->and($ddl)->toContain('CONSTRAINT posts_uuid_unique UNIQUE (uuid)')
+        // Foreign keys to visible tables are untouched.
+        ->and(collect(introspector()->constraints('fixture', 'post_tags'))->firstWhere('name', 'post_tags_post_id_fkey')['references'])
+        ->toBe(['schema' => 'fixture', 'table' => 'posts', 'columns' => ['id']]);
+});
+
+it('S13 rebuilds redacted foreign keys from quoted column names and keeps the DDL runnable', function () {
+    $schema = $this->scratchSchema();
+    config(['dbexplorer.hidden' => ["{$schema}.Vault"]]);
+
+    DB::connection('pgsql_admin')->unprepared(<<<SQL
+        CREATE TABLE {$schema}."Vault" (a int, "B b" int, PRIMARY KEY (a, "B b"));
+        CREATE TABLE {$schema}.child (id int PRIMARY KEY, "Odd Col" int, b int,
+            CONSTRAINT child_vault_fkey FOREIGN KEY ("Odd Col", b) REFERENCES {$schema}."Vault" (a, "B b"));
+        SQL);
+
+    $ddl = introspector()->tableDdl($schema, 'child');
+
+    expect(introspector()->constraints($schema, 'child')[1])->toMatchArray([
+        'definition' => 'FOREIGN KEY ("Odd Col", b) REFERENCES <hidden>',
+        'columns' => ['Odd Col', 'b'],
+        'references' => null,
+    ])
+        ->and($ddl)->not->toContain('Vault');
+
+    DB::connection('pgsql_super')->unprepared(str_replace("{$schema}.child", "{$schema}.child_copy", str_replace('child_pkey', 'child_copy_pkey', $ddl)));
+
+    expect(array_column(introspector('super')->constraints($schema, 'child_copy'), 'name'))->toBe(['child_copy_pkey']);
+});
+
+it('GAP: S13 view definitions still name the hidden tables they read', function () {
+    config(['dbexplorer.hidden' => ['fixture.secrets']]);
+
+    // Documented in docs/security.md: SQL bodies are shown as PostgreSQL returns them.
+    expect(array_column(introspector()->objects('fixture'), 'name'))->toContain('secret_labels')->not->toContain('secrets')
+        ->and(introspector()->viewDefinition('fixture', 'secret_labels'))->toContain('fixture.secrets');
+});

@@ -275,7 +275,9 @@ class Introspector
     /**
      * Constraints of a table: `type` is primary_key, unique, foreign_key,
      * check, exclusion or trigger. NOT NULL is reported by columns(), not here.
-     * Foreign keys carry their target in `references`.
+     * Foreign keys carry their target in `references`. When the target is
+     * hidden (S13), `references` is null and the definition ends in
+     * `REFERENCES <hidden>`.
      *
      * @return list<ConstraintRow>
      *
@@ -477,8 +479,12 @@ class Introspector
             }
         }
 
+        $omitted = [];
+
         foreach ($this->constraintRows($oid) as $constraint) {
-            if ($constraint['local']) {
+            if ($constraint['hidden_target']) {
+                $omitted[] = "-- Constraint {$constraint['quoted']} is omitted: it references a hidden table.";
+            } elseif ($constraint['local']) {
                 $elements[] = "CONSTRAINT {$constraint['quoted']} {$constraint['definition']}";
             }
         }
@@ -495,6 +501,10 @@ class Introspector
         }
 
         $statements = [$create.';'];
+
+        if ($omitted !== []) {
+            $statements[] = implode("\n", $omitted);
+        }
 
         foreach ($this->indexRows($oid) as $index) {
             if ($index['constraint'] === null && ! $index['inherited']) {
@@ -585,7 +595,9 @@ class Introspector
 
     /**
      * Constraints except NOT NULL (contype n, stored in pg_constraint from PostgreSQL 18).
-     * `local` is false for constraints a partition or child inherits.
+     * `local` is false for constraints a partition or child inherits. A
+     * foreign key to a hidden table gets `hidden_target`, no ref_* values and
+     * a definition rebuilt from its own columns, without the target's name.
      *
      * @return list<array<string, mixed>>
      */
@@ -593,12 +605,20 @@ class Introspector
     {
         return array_map(function (array $row): array {
             $row['local'] = (bool) $row['local'];
+            $row['hidden_target'] = $row['ref_table'] !== null && $this->hidden->isHidden((string) $row['ref_schema'], (string) $row['ref_table']);
+
+            if ($row['hidden_target']) {
+                $row['definition'] = 'FOREIGN KEY ('.implode(', ', self::jsonList($row['quoted_columns'])).') REFERENCES <hidden>';
+                $row['ref_schema'] = $row['ref_table'] = $row['ref_columns'] = null;
+            }
 
             return $row;
         }, $this->select(
             'SELECT con.conname AS name, quote_ident(con.conname) AS quoted, con.contype::text AS type, pg_get_constraintdef(con.oid) AS definition,
                 (SELECT coalesce(json_agg(a.attname ORDER BY k.ord), \'[]\')::text FROM unnest(con.conkey) WITH ORDINALITY k(attnum, ord)
                     JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum) AS columns,
+                (SELECT coalesce(json_agg(quote_ident(a.attname) ORDER BY k.ord), \'[]\')::text FROM unnest(con.conkey) WITH ORDINALITY k(attnum, ord)
+                    JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum) AS quoted_columns,
                 fn.nspname AS ref_schema, fc.relname AS ref_table,
                 (SELECT coalesce(json_agg(a.attname ORDER BY k.ord), \'[]\')::text FROM unnest(con.confkey) WITH ORDINALITY k(attnum, ord)
                     JOIN pg_attribute a ON a.attrelid = con.confrelid AND a.attnum = k.attnum) AS ref_columns,
