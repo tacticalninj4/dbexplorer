@@ -3,7 +3,9 @@ parameters:
     phpVersion: 80000
     paths:
         - src
-        - config
+        - %currentWorkingDirectory%/config
         - database
         - routes
     tmpDir: build/phpstan
+    configDirectories:
+        - %currentWorkingDirectory%/config
