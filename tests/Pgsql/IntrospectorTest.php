@@ -237,7 +237,8 @@ it('describes triggers', function () {
 
 it('returns view and materialized view definitions', function () {
     expect(introspector()->viewDefinition('fixture', 'published_posts'))->toContain('FROM fixture.posts p')->toContain('published_at IS NOT NULL')
-        ->and(introspector()->viewDefinition('fixture', 'post_stats'))->toContain('GROUP BY user_id');
+        ->and(introspector()->viewDefinition('fixture', 'post_stats'))// PostgreSQL before 16 qualifies the column.
+        ->toMatch('/GROUP BY (posts\\.)?user_id;$/');
 });
 
 it('describes only the kinds of relation each method supports', function (string $method, string $name) {
