@@ -2,9 +2,11 @@
 
 declare(strict_types=1);
 
+use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Monolog\Handler\TestHandler;
 use TacticalNinj4\DbExplorer\Facades\DbExplorer;
@@ -140,3 +142,71 @@ it('rolls the metadata tables back', function () {
 it('registers the audit commands', function (string $command) {
     expect(Artisan::all())->toHaveKey($command);
 })->with(['dbx:audit:verify', 'dbx:prune']);
+
+/**
+ * A {label} route behind the package's middleware stack that writes one audit entry.
+ *
+ * @param  array<string, mixed>  $entry
+ */
+function auditProbeRoute(array $entry): void
+{
+    app()['env'] = 'local';
+
+    $route = Route::getRoutes()->getByName('dbexplorer.me');
+    expect($route)->not->toBeNull();
+
+    Route::middleware($route->gatherMiddleware())
+        ->get('dbexplorer/api/{label}/audit-probe', fn (): JsonResponse => new JsonResponse([
+            'id' => DbExplorer::audit($entry)->id,
+        ]));
+}
+
+it('S17 fills user, IP, user agent, label and role from the current request', function () {
+    auditProbeRoute(['action' => 'query']);
+
+    $this->actingAs(makeUser(42))
+        ->withHeaders(['User-Agent' => 'AuditBrowser/1.0'])
+        ->withServerVariables(['REMOTE_ADDR' => '198.51.100.7'])
+        ->getJson('/dbexplorer/api/main/audit-probe')
+        ->assertOk();
+
+    $row = AuditEntry::query()->sole();
+
+    expect($row->user_id)->toBe('42')
+        ->and($row->ip)->toBe('198.51.100.7')
+        ->and($row->user_agent)->toBe('AuditBrowser/1.0')
+        ->and($row->label)->toBe('main')
+        ->and($row->role)->toBe('viewer')
+        ->and(Artisan::call('dbx:audit:verify'))->toBe(0);
+});
+
+it('S17 lets explicit values, including null, win over the request context', function () {
+    auditProbeRoute(['action' => 'query', 'user_id' => 'system', 'ip' => null, 'label' => 'other']);
+
+    $this->actingAs(makeUser(42))
+        ->withHeaders(['User-Agent' => 'AuditBrowser/1.0'])
+        ->getJson('/dbexplorer/api/main/audit-probe')
+        ->assertOk();
+
+    $row = AuditEntry::query()->sole();
+
+    expect($row->user_id)->toBe('system')
+        ->and($row->ip)->toBeNull()
+        ->and($row->label)->toBe('other')
+        ->and($row->role)->toBe('viewer')
+        ->and($row->user_agent)->toBe('AuditBrowser/1.0');
+});
+
+it('S17 leaves request fields empty in console and queue context', function () {
+    $this->actingAs(makeUser(42));
+
+    DbExplorer::audit(['action' => 'query']);
+
+    $row = AuditEntry::query()->sole();
+
+    expect($row->user_id)->toBeNull()
+        ->and($row->ip)->toBeNull()
+        ->and($row->user_agent)->toBeNull()
+        ->and($row->label)->toBeNull()
+        ->and($row->role)->toBeNull();
+});

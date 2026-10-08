@@ -31,11 +31,14 @@ it('S1 is disabled unless DBEXPLORER_ENABLED is set', function () {
     expect($config['enabled'])->toBeFalse();
 });
 
-it('leaves storage and audit settings to the audit log task', function () {
+it('ships every top-level setting, with storage and audit defaults', function () {
     $config = require __DIR__.'/../../config/dbexplorer.php';
 
     expect(array_keys($config))->toBe([
         'enabled', 'path', 'domain', 'middleware', 'ip_allowlist', 'connections',
-        'limits', 'hidden', 'masking', 'queue', 'backup',
-    ]);
+        'limits', 'hidden', 'masking', 'queue', 'backup', 'storage', 'audit',
+    ])
+        ->and($config['storage'])->toBe(['connection' => null, 'disk' => 'local', 'file_ttl_hours' => 24])
+        ->and($config['audit']['retention_days'])->toBe(90)
+        ->and($config['audit']['log_channel'])->toBeNull();
 });

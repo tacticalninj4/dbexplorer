@@ -5,7 +5,11 @@ declare(strict_types=1);
 namespace TacticalNinj4\DbExplorer;
 
 use Closure;
+use Illuminate\Http\Request;
+use TacticalNinj4\DbExplorer\Audit\AuditLog;
 use TacticalNinj4\DbExplorer\Exceptions\ConnectionNotAllowedException;
+use TacticalNinj4\DbExplorer\Http\Middleware\ResolveRole;
+use TacticalNinj4\DbExplorer\Models\AuditEntry;
 use UnexpectedValueException;
 
 class DbExplorer
@@ -125,5 +129,44 @@ class DbExplorer
         }
 
         return $connections[$label];
+    }
+
+    /**
+     * Append an entry to the hash-chained audit log (S17, S22).
+     *
+     * Inside a routed HTTP request, user_id, ip, user_agent, label and role
+     * default to the current request, its user and the attributes ResolveRole
+     * set. Keys the caller passes, even as null, always win.
+     *
+     * @param  array<string, mixed>  $entry
+     */
+    public function audit(array $entry): AuditEntry
+    {
+        return app(AuditLog::class)->record($entry + $this->auditContext());
+    }
+
+    /**
+     * Audit fields from the current request. Empty in console and queue
+     * contexts, where the bound request was never routed.
+     *
+     * @return array<string, string>
+     */
+    protected function auditContext(): array
+    {
+        $request = app()->bound('request') ? app('request') : null;
+
+        if (! $request instanceof Request || $request->route() === null) {
+            return [];
+        }
+
+        $id = $request->user()?->getAuthIdentifier();
+
+        return array_filter([
+            'user_id' => is_scalar($id) ? (string) $id : null,
+            'ip' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+            'label' => $request->attributes->get(ResolveRole::LABEL),
+            'role' => $request->attributes->get(ResolveRole::ROLE),
+        ], fn (mixed $value): bool => is_string($value) && $value !== '');
     }
 }

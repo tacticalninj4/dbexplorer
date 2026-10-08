@@ -39,6 +39,10 @@ abstract class TestCase extends Orchestra
             'prefix' => '',
             'foreign_key_constraints' => true,
         ]);
+        // Hermetic against a stray skeleton .env (e.g. CACHE_STORE=database after composer build).
+        $app['config']->set('cache.default', 'array');
+        $app['config']->set('cache.store', 'array');
+        $app['config']->set('session.driver', 'array');
         $app['config']->set('app.key', 'base64:'.base64_encode(str_repeat('k', 32)));
         $app['config']->set('dbexplorer.enabled', true);
         $app['config']->set($this->bootConfig);
