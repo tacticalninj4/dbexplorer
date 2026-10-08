@@ -114,8 +114,8 @@ Without `DB_PGSQL_HOST` the workbench keeps SQLite.
 
 ### 3.2 What the test bootstrap creates
 It connects as the superuser and does the following, idempotently:
-1. Creates **cluster-wide login roles** through a `DO` block that holds an advisory lock, so parallel workers don't race: `dbx_viewer`, `dbx_editor` and `dbx_admin`, all with the password `dbx-test-password`.
-2. Creates a **database per parallel worker**, `dbx_test_{TEST_TOKEN}` (`dbx_test` when not parallel), with `dbx_admin` as owner.
+1. Creates **cluster-wide login roles** through a `DO` block that holds an advisory lock, so parallel workers and checkouts don't race: `dbx_viewer`, `dbx_editor` and `dbx_admin`, all with the password `dbx-test-password`.
+2. Creates a **database per checkout and parallel worker**, `dbx_test_{checkout}_{TEST_TOKEN}` (`dbx_test_{checkout}` when not parallel), with `dbx_admin` as owner. `{checkout}` is the first 8 hex digits of the SHA-1 of the package root path, so several checkouts can run the suite against one cluster at once. The roles stay shared: concurrent checkouts only ever set the same fixed password, which doesn't affect sessions already logged in.
 3. Loads the **fixture** (`tests/fixtures/pgsql.sql`, shared with the workbench seeder) into schema `fixture`. It records the file's SHA-1 in the database comment and skips the load while that matches, so the 1M rows are generated once per worker database, not on every run:
    - tables with and without a PK
    - a composite PK

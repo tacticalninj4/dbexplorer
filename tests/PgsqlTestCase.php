@@ -12,8 +12,8 @@ use Illuminate\Support\Facades\DB;
  * Base case for tests/Pgsql (group "pgsql"), see docs/TESTING.md §3.
  *
  * Connects with the DB_PGSQL_* env vars and skips when DB_PGSQL_HOST is unset.
- * Each parallel worker gets its own database, dbx_test_{TEST_TOKEN} (dbx_test
- * when not parallel), owned by dbx_admin, with the read-only fixture schema
+ * Each checkout and parallel worker gets its own database (see database()),
+ * owned by dbx_admin, with the read-only fixture schema
  * loaded once and kept across runs until tests/fixtures/pgsql.sql changes.
  *
  * Connections: pgsql_viewer, pgsql_editor and pgsql_admin log in as the
@@ -133,12 +133,15 @@ abstract class PgsqlTestCase extends TestCase
     }
 
     /**
-     * The database for this worker: dbx_test_{TEST_TOKEN}, or dbx_test when not parallel.
+     * The database for this checkout and worker: dbx_test_{checkout}_{TEST_TOKEN},
+     * or dbx_test_{checkout} when not parallel. {checkout} is a short hash of the
+     * package root, so checkouts sharing a cluster never share a database.
      */
     public static function database(): string
     {
+        $database = 'dbx_test_'.substr(sha1(dirname(__DIR__)), 0, 8);
         $token = getenv('TEST_TOKEN');
 
-        return is_string($token) && $token !== '' ? 'dbx_test_'.preg_replace('/\W/', '', $token) : 'dbx_test';
+        return is_string($token) && $token !== '' ? $database.'_'.preg_replace('/\W/', '', $token) : $database;
     }
 }
