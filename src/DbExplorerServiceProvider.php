@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use TacticalNinj4\DbExplorer\Audit\AuditLog;
 use TacticalNinj4\DbExplorer\Console\AuditVerifyCommand;
+use TacticalNinj4\DbExplorer\Console\InstallCommand;
 use TacticalNinj4\DbExplorer\Console\PruneCommand;
 use TacticalNinj4\DbExplorer\Http\Middleware\Authorize;
 use TacticalNinj4\DbExplorer\Http\Middleware\ContentSecurityPolicy;
@@ -53,6 +54,7 @@ class DbExplorerServiceProvider extends ServiceProvider
 
         $this->commands([
             AuditVerifyCommand::class,
+            InstallCommand::class,
             PruneCommand::class,
         ]);
 
