@@ -36,11 +36,12 @@ it('ships every top-level setting, with storage and audit defaults', function ()
 
     expect(array_keys($config))->toBe([
         'enabled', 'path', 'domain', 'middleware', 'ip_allowlist', 'connections',
-        'limits', 'hidden', 'masking', 'queue', 'backup', 'storage', 'audit',
+        'limits', 'confirm_password', 'hidden', 'masking', 'queue', 'backup', 'storage', 'audit',
     ])
         ->and($config['storage'])->toBe(['connection' => null, 'disk' => 'local', 'file_ttl_hours' => 24])
         ->and($config['audit']['retention_days'])->toBe(90)
-        ->and($config['audit']['log_channel'])->toBeNull();
+        ->and($config['audit']['log_channel'])->toBeNull()
+        ->and($config['confirm_password'])->toBeTrue();
 });
 
 it('reads the storage connection from DBEXPLORER_STORAGE_CONNECTION', function () {

@@ -270,7 +270,7 @@ Plain event classes, constructed with public properties (PHP 8.0-safe, no `reado
 
 ### M2.1 Password confirmation (S5)
 - `Security/PasswordConfirmation` reads and writes the same session key Laravel uses (`auth.password_confirmed_at`) and respects `auth.password_timeout`. A confirmation made in the host app therefore counts here too, and the reverse.
-- `POST /api/confirm-password` checks the password with `Hash::check` against `auth()->user()->getAuthPassword()`, throttled at 5 attempts per minute.
+- `POST /api/confirm-password` checks the password through the guard's user provider (`validateCredentials`, so custom providers work; `Hash::check` against `getAuthPassword()` only for guards without one), throttled at 5 attempts per minute by the `dbexplorer-confirm` limiter. Every attempt is audited as `password_confirm`.
 - Endpoints that perform destructive actions return **423** when confirmation is stale. The SPA catches 423, shows a modal, confirms, and retries the request.
 - Tests: 423 → confirm → success; wrong password; throttling; timeout expiry.
 

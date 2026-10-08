@@ -156,6 +156,7 @@ All keys live in `config/dbexplorer.php`.
 | `limits.{viewer,editor,admin}.rows` | `1000` / `5000` / `10000` | Maximum rows returned per role *(planned, M1)*. |
 | `limits.background.timeout` | `3600` | Statement timeout in seconds for queued jobs *(planned, M3)*. |
 | `limits.queries_per_minute` | `60` | The `dbexplorer` rate limiter, per user or per IP, for query execution *(planned, M1)*. |
+| `confirm_password` | `true` | Destructive actions need the password re-confirmed within Laravel's `auth.password_timeout` (shared with the host app's `password.confirm`). Users without a password (SSO-only) can't confirm, so can't run them. `false` skips confirmation entirely; see [docs/security.md](docs/security.md). |
 | `hidden` | `pg_toast*`, `*.password_reset*`, `*.personal_access_tokens`, `*.dbx_*`, `dbexplorer.*` | Globs for schemas and tables hidden from browsing, including DbExplorer's own tables *(planned, M1)*. |
 | `masking` | `*.password`, `*.*token*`, `*.*secret*` | Globs for `table.column` values masked in grids and exports *(planned, M1)*. |
 | `queue.connection` | `null` | Queue connection for background work; null uses the app default *(planned, M3)*. |

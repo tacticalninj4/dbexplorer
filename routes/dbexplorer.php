@@ -2,8 +2,10 @@
 
 declare(strict_types=1);
 
+use Illuminate\Routing\Middleware\ThrottleRequests;
 use Illuminate\Support\Facades\Route;
 use TacticalNinj4\DbExplorer\Http\Controllers\AssetController;
+use TacticalNinj4\DbExplorer\Http\Controllers\ConfirmPasswordController;
 use TacticalNinj4\DbExplorer\Http\Controllers\MeController;
 use TacticalNinj4\DbExplorer\Http\Controllers\ShellController;
 
@@ -11,6 +13,11 @@ use TacticalNinj4\DbExplorer\Http\Controllers\ShellController;
 // middleware group, and only while dbexplorer.enabled is true.
 
 Route::get('api/me', MeController::class)->name('me');
+
+// Password re-confirmation for destructive actions (S5), brute-force limited.
+Route::post('api/confirm-password', ConfirmPasswordController::class)
+    ->middleware(ThrottleRequests::class.':dbexplorer-confirm')
+    ->name('confirm-password');
 
 Route::get('assets/{path}', AssetController::class)->where('path', '.+')->name('asset');
 

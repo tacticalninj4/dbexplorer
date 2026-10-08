@@ -102,6 +102,24 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Password confirmation
+    |--------------------------------------------------------------------------
+    |
+    | Destructive actions (DROP, TRUNCATE, DELETE or UPDATE without WHERE,
+    | deleting a row, ALTER ... DROP) need the user's password re-confirmed
+    | within `auth.password_timeout` seconds (Laravel's setting, 3 hours by
+    | default). The confirmation is shared with the host app's
+    | `password.confirm` middleware. Users without a password, such as
+    | SSO-only accounts, can't confirm and so can't run destructive actions.
+    | Setting this to false skips confirmation entirely: anyone with a
+    | session (including a stolen one) can then run them straight away.
+    |
+    */
+
+    'confirm_password' => true,
+
+    /*
+    |--------------------------------------------------------------------------
     | Hidden objects
     |--------------------------------------------------------------------------
     |

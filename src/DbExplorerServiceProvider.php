@@ -76,15 +76,17 @@ class DbExplorerServiceProvider extends ServiceProvider
     }
 
     /**
-     * Register the routes and the `dbexplorer` rate limiter.
+     * Register the routes and the `dbexplorer` and `dbexplorer-confirm` rate limiters.
      */
     protected function registerRoutes(): void
     {
         RateLimiter::for('dbexplorer', function (Request $request): Limit {
-            $user = $request->user();
-            $key = $user !== null ? 'user:'.$user->getAuthIdentifier() : 'ip:'.$request->ip();
+            return Limit::perMinute((int) config('dbexplorer.limits.queries_per_minute', 60))->by($this->limiterKey($request));
+        });
 
-            return Limit::perMinute((int) config('dbexplorer.limits.queries_per_minute', 60))->by($key);
+        // Password confirmation attempts (S5): 5 per minute, whatever the outcome.
+        RateLimiter::for('dbexplorer-confirm', function (Request $request): Limit {
+            return Limit::perMinute(5)->by($this->limiterKey($request));
         });
 
         Route::group([
@@ -99,5 +101,15 @@ class DbExplorerServiceProvider extends ServiceProvider
         ], function (): void {
             $this->loadRoutesFrom(__DIR__.'/../routes/dbexplorer.php');
         });
+    }
+
+    /**
+     * Rate limit per user, so one IP can't share or reset a budget; per IP for guests.
+     */
+    protected function limiterKey(Request $request): string
+    {
+        $user = $request->user();
+
+        return $user !== null ? 'user:'.$user->getAuthIdentifier() : 'ip:'.$request->ip();
     }
 }
