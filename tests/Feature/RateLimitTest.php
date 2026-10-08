@@ -19,7 +19,7 @@ function limitFor(Request $request): Limit
 
 function requestFrom(string $ip, ?User $user = null): Request
 {
-    $request = Request::create('/dbexplorer/api/ping', 'GET', [], [], [], ['REMOTE_ADDR' => $ip]);
+    $request = Request::create('/dbexplorer/api/me', 'GET', [], [], [], ['REMOTE_ADDR' => $ip]);
     $request->setUserResolver(fn (): ?User => $user);
 
     return $request;

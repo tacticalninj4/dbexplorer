@@ -71,6 +71,24 @@ class DbExplorer
     }
 
     /**
+     * Every label listed in `dbexplorer.connections`.
+     *
+     * @return list<string>
+     */
+    public function labels(): array
+    {
+        $connections = config('dbexplorer.connections');
+
+        if (! is_array($connections)) {
+            return [];
+        }
+
+        $labels = array_keys(array_filter($connections, 'is_array'));
+
+        return array_map('strval', $labels);
+    }
+
+    /**
      * Resolve an explorer label and role to a Laravel connection name.
      *
      * @throws ConnectionNotAllowedException
