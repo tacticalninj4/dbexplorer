@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace njrdevs\DbExplorer\Tests;
+namespace TacticalNinj4\DbExplorer\Tests;
 
-use njrdevs\DbExplorer\DbExplorerServiceProvider;
 use Orchestra\Testbench\TestCase as Orchestra;
+use TacticalNinj4\DbExplorer\DbExplorerServiceProvider;
 
 abstract class TestCase extends Orchestra
 {

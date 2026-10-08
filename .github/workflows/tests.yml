@@ -14,24 +14,54 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Tooling that needs PHP 8.2+/8.3+. Only the tooling lane installs it.
+  TOOLING_DEV_DEPS: larastan/larastan laravel/pint laravel/pao pestphp/pest-plugin-type-coverage
+
 jobs:
   tests:
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
 
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        php: [8.3, 8.4, 8.5]
-        laravel: [12.*, 13.*]
-        stability: [prefer-lowest, prefer-stable]
         include:
-          - laravel: 12.*
-            testbench: 10.*
-          - laravel: 13.*
-            testbench: 11.*
+          # Laravel 9: PHP 8.0-8.2, Testbench 7, Pest 1, oldest supported Postgres.
+          - { laravel: '9.*', testbench: '^7.0', pest: '^1.23', pest-laravel: '^1.4', php: '8.0', stability: prefer-lowest, lane: compat, postgres: '12' }
+          - { laravel: '9.*', testbench: '^7.0', pest: '^1.23', pest-laravel: '^1.4', php: '8.2', stability: prefer-stable, lane: compat, postgres: '12' }
+          # Laravel 10: PHP 8.1-8.3, Testbench 8, Pest 2.
+          - { laravel: '10.*', testbench: '^8.0', pest: '^2.0', pest-laravel: '^2.0', php: '8.1', stability: prefer-lowest, lane: compat, postgres: '18' }
+          - { laravel: '10.*', testbench: '^8.0', pest: '^2.0', pest-laravel: '^2.0', php: '8.3', stability: prefer-stable, lane: compat, postgres: '18' }
+          # Laravel 11: PHP 8.2-8.4, Testbench 9, Pest 3.
+          - { laravel: '11.*', testbench: '^9.0', pest: '^3.0', pest-laravel: '^3.0', php: '8.2', stability: prefer-lowest, lane: compat, postgres: '18' }
+          - { laravel: '11.*', testbench: '^9.0', pest: '^3.0', pest-laravel: '^3.0', php: '8.4', stability: prefer-stable, lane: compat, postgres: '18' }
+          # Laravel 12: PHP 8.3-8.5 (Pest 4 needs PHP 8.3), Testbench 10.6+ (older cores break on PHPUnit 12.3), Pest 4.
+          - { laravel: '12.*', testbench: '^10.6', pest: '^4.0', pest-laravel: '^4.0', php: '8.3', stability: prefer-lowest, lane: compat, postgres: '18' }
+          - { laravel: '12.*', testbench: '^10.6', pest: '^4.0', pest-laravel: '^4.0', php: '8.5', stability: prefer-stable, lane: compat, postgres: '18' }
+          # Laravel 13: PHP 8.4-8.5 (Pest 5 needs PHP 8.4), Testbench 11, Pest 5. 8.5 is the tooling lane.
+          - { laravel: '13.*', testbench: '^11.0', pest: '^5.0', pest-laravel: '^5.0', php: '8.4', stability: prefer-lowest, lane: compat, postgres: '18' }
+          - { laravel: '13.*', testbench: '^11.0', pest: '^5.0', pest-laravel: '^5.0', php: '8.5', stability: prefer-stable, lane: tooling, postgres: '18' }
 
-    name: P${{ matrix.php }} - L${{ matrix.laravel }} - ${{ matrix.stability }} - ${{ matrix.os }}
+    name: P${{ matrix.php }} - L${{ matrix.laravel }} - ${{ matrix.stability }} - ${{ matrix.lane }} - pg${{ matrix.postgres }}
+
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DB_PGSQL_HOST: 127.0.0.1
+      DB_PGSQL_PORT: 5432
+      DB_PGSQL_USERNAME: postgres
+      DB_PGSQL_PASSWORD: postgres
 
     steps:
       - name: Checkout code
@@ -41,31 +71,95 @@ jobs:
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
         with:
           php-version: ${{ matrix.php }}
+          extensions: dom, curl, libxml, mbstring, zip, fileinfo, sqlite, pdo_sqlite, pdo_pgsql, pgsql, bcmath, intl
+          ini-values: error_reporting=E_ALL
+          tools: composer:v2
+          coverage: none
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-${{ matrix.postgres }}
+          echo "/usr/lib/postgresql/${{ matrix.postgres }}/bin" >> "$GITHUB_PATH"
+
+      - name: Prepare compatibility lane
+        if: matrix.lane == 'compat'
+        run: |
+          # Laravel 9/10 and their lowest dependencies have published advisories; this lane tests compatibility, not security.
+          composer config audit.block-insecure false
+          composer remove --dev --no-update --no-interaction ${{ env.TOOLING_DEV_DEPS }}
+
+      - name: Install dependencies
+        run: |
+          composer require --dev --no-update --no-interaction "laravel/framework:${{ matrix.laravel }}" "orchestra/testbench:${{ matrix.testbench }}" "pestphp/pest:${{ matrix.pest }}" "pestphp/pest-plugin-laravel:${{ matrix.pest-laravel }}"
+          composer update --${{ matrix.stability }} --prefer-dist --no-interaction --no-progress --no-scripts
+
+      # Workbench discovery. Testbench 7.0's CLI can't read testbench.yaml's `laravel: '@testbench'`, and the tests don't need it.
+      - name: Prepare workbench
+        if: matrix.lane == 'tooling'
+        run: composer run prepare
+
+      - name: PHPStan
+        if: matrix.lane == 'tooling'
+        run: composer analyse
+
+      - name: Linter
+        if: matrix.lane == 'tooling'
+        run: composer lint:check
+
+      - name: Type Coverage
+        if: matrix.lane == 'tooling'
+        run: composer test:types
+
+      - name: Test Suite
+        run: vendor/bin/pest
+
+  windows:
+    runs-on: windows-latest
+
+    name: P8.4 - L13.* - prefer-stable - compat - windows
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.4'
           extensions: dom, curl, libxml, mbstring, zip, fileinfo, sqlite, pdo_sqlite, bcmath, intl
           ini-values: error_reporting=E_ALL
           tools: composer:v2
           coverage: none
 
       - name: Install dependencies
+        shell: bash
         run: |
-          composer require "laravel/framework:${{ matrix.laravel }}" "orchestra/testbench:${{ matrix.testbench }}" --no-interaction --no-update
-          composer update --${{ matrix.stability }} --prefer-dist --no-interaction --no-progress --no-scripts
-          composer run prepare
-
-      - name: PHPStan
-        run: composer analyse
-
-      - name: Linter
-        run: composer lint:check
-
-      - name: Type Coverage
-        if: runner.os != 'Windows'
-        run: composer test:types
+          composer remove --dev --no-update --no-interaction ${{ env.TOOLING_DEV_DEPS }}
+          composer require --dev --no-update --no-interaction "laravel/framework:13.*" "orchestra/testbench:^11.0" "pestphp/pest:^5.0" "pestphp/pest-plugin-laravel:^5.0"
+          composer update --prefer-stable --prefer-dist --no-interaction --no-progress --no-scripts
 
       - name: Test Suite
-        if: runner.os != 'Windows'
-        run: composer test:unit
-
-      - name: Test Suite (Windows)
-        if: runner.os == 'Windows'
         run: vendor/bin/pest
+
+  assets:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # package.json arrives in M0.7; until then this job is a no-op.
+      - name: Build assets
+        if: hashFiles('package.json') != ''
+        run: |
+          npm ci
+          npm run build
+
+      - name: Verify committed dist/ is up to date
+        if: hashFiles('package.json') != ''
+        run: |
+          git diff --exit-code dist/
+          test -z "$(git status --porcelain --untracked-files=all dist/)"

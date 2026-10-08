@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace njrdevs\DbExplorer;
+namespace TacticalNinj4\DbExplorer;
 
 class DbExplorer
 {
