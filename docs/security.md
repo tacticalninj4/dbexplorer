@@ -35,7 +35,7 @@ Every request passes these in order. Each one assumes the ones before it can fai
 | 3 | `viewDbExplorer` gate | Decides who may enter at all. Without a gate, only the `local` environment gets in. |
 | 4 | Role and connection allowlist | `DbExplorer::roleUsing()` maps the user to `viewer`, `editor`, `admin` or no access, per connection label. Only labels in `dbexplorer.connections` exist, and each role uses its own Laravel connection. |
 | 5 | Database login | Each of those connections logs in as a PostgreSQL role holding only that role's privileges (§3). **This is the boundary.** |
-| 6 | Query limits *(planned, M1)* | One statement per query via a native prepare, viewer queries in `BEGIN READ ONLY`, `SET LOCAL statement_timeout` and a row cap per role. |
+| 6 | Query limits | One statement per query via a native prepare, viewer queries in `BEGIN READ ONLY` (always rolled back), a transaction-local `statement_timeout` and a row cap per role, reads streamed through a server-side cursor. |
 | 7 | Audit log | Every action is written to an HMAC hash-chained log (§5), optionally forwarded to a log channel. |
 
 ## 3. PostgreSQL roles
@@ -179,6 +179,7 @@ These are known limits. Where a test exists, it is named `GAP: ...` so the behav
 
 - **The SQL classifier is UX only** *(planned, M1)*. It labels statements as read, DML, DDL or destructive to drive confirmations. It is not a security check; the database login is.
 - **Masking misses aliases** *(planned, M1)*. Masking matches `schema.table.column` through the source table PostgreSQL reports for each result column. `SELECT password AS x FROM users` returns the value unmasked, because PostgreSQL doesn't report the source column of an aliased expression. To really keep a column from someone, use a column grant (recipe step 8).
+- **NOTICE messages are not masked.** A function or `DO` block can `RAISE NOTICE` any value it can read, and the SQL editor shows notices as they are (PHP 8.4+ only). Like aliasing, this is why a column grant, not masking, is the way to keep a value from a role.
 - **Hidden objects leak through functions** *(planned, M1)*. Queries that name a hidden table directly, through a view, a CTE or a subquery are rejected; a function that reads the table is not. Revoke access in the database for real enforcement.
 - **Tail truncation of the audit log isn't detectable from the chain.** Someone who deletes the newest rows can also rewrite `dbx_audit_head`. Set `audit.log_channel` so every entry, with its hash, is also shipped somewhere the database can't reach.
 - **IP checks trust `$request->ip()`.** Behind a load balancer or proxy, configure the app's trusted proxies (`TrustProxies` middleware, or `trustProxies()` in `bootstrap/app.php` on Laravel 11+) to your proxy's addresses only. Too few and every request has the proxy's IP; trusting `*` on a server reachable directly lets clients forge `X-Forwarded-For`. The same IP goes into the audit log.
