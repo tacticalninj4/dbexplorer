@@ -47,7 +47,7 @@ Enforcement: in `phpstan.neon.dist`, set `phpVersion: 80000`. PHPStan then repor
 | Route `->can()` | Laravel 9 ✓ | — |
 | `callAfterResolving()`, `RateLimiter::for`, `URL::temporarySignedRoute`, `LazyCollection` | Laravel 9 ✓ | — |
 
-**Tests must run on Pest 1.** The Laravel 9 lane runs Pest 1 because PHP 8.0 can't install Pest 2 or later. Shared tests therefore can't use `describe()`, `arch()`, `->todo()`, or `covers()`. `tests/ArchTest.php` starts with `if (! function_exists('arch')) { return; }`.
+**Tests must run on Pest 1.** The Laravel 9 lane runs Pest 1 because PHP 8.0 can't install Pest 2 or later. Shared tests therefore can't use `describe()`, `arch()`, `->todo()`, or `covers()`. `tests/ArchTest.php` returns early unless `arch()` and the Pest 3 presets exist (`Pest\ArchPresets\Php`).
 
 **PostgreSQL in tests.** Most feature tests need a real Postgres, because SQLite can't tell us anything about `pg_catalog`, `statement_timeout`, or read-only transactions. The full strategy is in [TESTING.md](TESTING.md).
 - Tests tagged `->group('pgsql')` connect using `DB_PGSQL_*` env vars. If those vars are missing, the tests are skipped.
@@ -101,22 +101,30 @@ docs/  PRD.md  IMPLEMENTATION_PLAN.md  security.md  (user-facing docs live in RE
   - `php: ^8.0`
   - Replace `illuminate/support` with the components actually used: `illuminate/{support,contracts,database,routing,http,queue,console,auth}` `^9.0||^10.0||^11.0||^12.0||^13.0`
   - Add `ext-pdo_pgsql` to `suggest` in v1. It becomes required once Postgres is the only driver in use.
-  - Dev: `orchestra/testbench ^7.0||…||^11.0`, `pestphp/pest ^1.23||^2.0||^3.0||^4.0||^5.0` (same for `pest-plugin-laravel`)
-- **Tooling lane vs. compatibility lanes.** `larastan`, `pint`, `pao` and `pest-plugin-type-coverage` need PHP 8.2+/8.3+. Only the tooling lane runs them. In compatibility lanes, CI first runs `composer remove --dev --no-update larastan/larastan laravel/pint laravel/pao pestphp/pest-plugin-type-coverage`, then runs only `vendor/bin/pest`.
-- `.github/workflows/tests.yml`. The PHP pairings below follow each Laravel version's published range; confirm them when wiring the workflow.
+  - Dev: `orchestra/testbench ^7.0||^8.0||^9.0||^10.6||^11.0`, `pestphp/pest ^1.23||^2.0||^3.0||^4.0||^5.0`, `pestphp/pest-plugin-laravel ^1.4||^2.0||^3.0||^4.0||^5.0` (1.4 is the last 1.x plugin release)
+- **Tooling lane vs. compatibility lanes.** `larastan`, `pint`, `pao` and `pest-plugin-type-coverage` need PHP 8.2+/8.3+. Only the tooling lane runs them. In compatibility lanes, CI first runs `composer remove --dev --no-update larastan/larastan laravel/pint laravel/pao pestphp/pest-plugin-type-coverage`, then runs only `vendor/bin/pest`. Compatibility lanes also set `composer config audit.block-insecure false`: Composer 2.9+ refuses to install versions with security advisories, which covers every Laravel 9/10 release and the lowest dependencies of the others.
+- `.github/workflows/tests.yml`. The pairings below were checked against Packagist constraints and run locally in Docker (2026-10-09).
 
 | Laravel | PHP | Testbench | Pest | Lane |
 |---|---|---|---|---|
 | 9 | 8.0, 8.2 | 7 | 1 | compat |
 | 10 | 8.1, 8.3 | 8 | 2 | compat |
 | 11 | 8.2, 8.4 | 9 | 3 | compat |
-| 12 | 8.3, 8.5 | 10 | 4 | compat |
-| 13 | 8.4, 8.5 | 11 | 5 | **tooling** (phpstan, pint, type coverage, arch) |
+| 12 | 8.3, 8.5 | 10.6+ | 4 | compat |
+| 13 | 8.4 | 11 | 5 | compat (prefer-lowest) |
+| 13 | 8.5 | 11 | 5 | **tooling** (phpstan, pint, type coverage, arch) |
+
+  - Each lane requires its Pest major explicitly, so the resolver can't drift to a newer one (e.g. Pest 4 on L11/PHP 8.4).
+  - Pest 4 needs PHP 8.3 and Pest 5 needs PHP 8.4, which sets the lowest PHP for L12 and L13.
+  - Testbench 10 starts at 10.6: older `testbench-core` calls `HandleExceptions::flushState()` without the test case and crashes on PHPUnit 12.3.
+  - Arch tests run only on Pest 3+ (presets). Pest 1 has no `arch()`, and Pest 2 has no presets.
+  - Pest 2.0 guesses the tests root from the first `<directory>` in `phpunit.xml.dist`, so those entries are written `./tests/Feature`, not `tests/Feature`. Without the `./`, `tests/Pest.php` isn't loaded.
 
   - `prefer-lowest` only on the lowest PHP of each Laravel version, which saves about half the runs.
   - Linux lanes start a `postgres` service. Postgres 12 runs on the L9 lanes and 18 on the others, so both ends of the support range are covered.
   - Keep one Windows lane (L13/PHP 8.4) without Postgres. It catches path and `Process` issues.
-  - A separate `assets` job: `npm ci && npm run build && git diff --exit-code dist/`.
+  - A separate `assets` job: `npm ci && npm run build && git diff --exit-code dist/`. Its steps are skipped until `package.json` exists (M0.7).
+  - `composer run prepare` (workbench discovery) runs only in the tooling lane. Testbench 7.0's CLI can't read `laravel: '@testbench'`, and the tests don't need it.
 - `phpstan.neon.dist`: add `phpVersion: 80000`.
 - **Done when:** every matrix cell is green with the empty package.
 

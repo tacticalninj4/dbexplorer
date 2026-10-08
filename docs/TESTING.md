@@ -186,9 +186,9 @@ These were verified before the plan was written. Each one becomes a regression t
 ## 6. Compatibility testing
 
 - **CI matrix:** see IMPLEMENTATION_PLAN §3 (M0.2). That covers Laravel 9–13, PHP 8.0–8.5 and Testbench 7–11, plus Pest 1–5 in compatibility lanes and full tooling on L13.
-- **Pest 1 constraint:** shared tests use only `it()`, `test()`, `expect()`, `beforeEach()`, `afterEach()` and datasets. No `describe()`, `arch()`, `->todo()` or `covers()`. `ArchTest.php` returns early when `arch()` doesn't exist.
+- **Pest 1 constraint:** shared tests use only `it()`, `test()`, `expect()`, `beforeEach()`, `afterEach()` and datasets. No `describe()`, `arch()`, `->todo()` or `covers()`. `ArchTest.php` returns early unless `arch()` and its presets exist (Pest 3+).
 - **Static check for PHP 8.0 syntax:** PHPStan with `phpVersion: 80000` in the tooling lane.
-- **Local spot checks** on older PHP use Herd's PHP binaries. Install the dependencies for that lane in a throwaway copy of the repo, so the main `composer.lock` isn't touched.
+- **Local spot checks** on older PHP use Herd's PHP binaries. Install the dependencies for that lane in a throwaway copy of the repo, so the main `composer.lock` isn't touched. Docker works too: copy the repo without `vendor/`, then run the lane's CI steps in `php:<version>-cli` (add `intl`; Pest 4.0's arch presets need it).
 
 ## 7. Performance checks
 
