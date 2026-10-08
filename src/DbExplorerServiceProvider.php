@@ -2,10 +2,9 @@
 
 declare(strict_types=1);
 
-namespace njrdevs\DbExplorer;
+namespace TacticalNinj4\DbExplorer;
 
 use Illuminate\Support\ServiceProvider;
-use njrdevs\DbExplorer\Console\Commands\DbExplorerCommand;
 
 class DbExplorerServiceProvider extends ServiceProvider
 {
@@ -30,6 +29,8 @@ class DbExplorerServiceProvider extends ServiceProvider
 
         $this->loadTranslationsFrom(__DIR__.'/../lang', 'dbexplorer');
 
+        $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
+
         if (! $this->app->runningInConsole()) {
             return;
         }
@@ -46,12 +47,8 @@ class DbExplorerServiceProvider extends ServiceProvider
             __DIR__.'/../lang' => $this->app->langPath('vendor/dbexplorer'),
         ], ['dbexplorer', 'dbexplorer-lang']);
 
-        $this->publishesMigrations([
+        $this->publishes([
             __DIR__.'/../database/migrations' => database_path('migrations'),
         ], ['dbexplorer', 'dbexplorer-migrations']);
-
-        $this->commands([
-            DbExplorerCommand::class,
-        ]);
     }
 }

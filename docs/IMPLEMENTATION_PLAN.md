@@ -16,7 +16,7 @@ Each task below is meant to be **one PR**. Tasks inside a milestone are ordered 
 
 | # | Decision | Recommended default |
 |---|---|---|
-| D1 | The PHP namespace is `njrdevs\DbExplorer`, but the package is named `tacticalninj4/dbexplorer`. | **Decided:** rename to `TacticalNinj4\DbExplorer` in M0.1. |
+| D1 | The scaffold's PHP namespace didn't match the package name `tacticalninj4/dbexplorer`. | **Decided:** rename to `TacticalNinj4\DbExplorer` in M0.1. |
 | D2 | PRD Q1: how assets are served. | **Decided:** serve `dist/` from the vendor directory through a package route, with hashed filenames and immutable cache headers. No publish step. |
 | D3 | PRD Q2: hash-chain the audit log. | **Decided: yes.** HMAC chain plus `dbx:audit:verify` (M0.6, PRD S22). |
 | D4 | PRD Q3: can viewers export masked columns? | **Decided: yes**, with masking applied in the file. |
@@ -92,7 +92,7 @@ docs/  PRD.md  IMPLEMENTATION_PLAN.md  security.md  (user-facing docs live in RE
 **Goal:** CI is green across the full matrix, an authenticated empty SPA shell loads, and the audit log exists.
 
 ### M0.1 Namespace + placeholder cleanup
-- Apply D1: rename `njrdevs\DbExplorer` everywhere (composer autoload, `extra.laravel`, source, tests).
+- Apply D1: rename the scaffold namespace to `TacticalNinj4\DbExplorer` everywhere (composer autoload, `extra.laravel`, source, tests).
 - Delete the scaffold placeholders: the placeholder migration, `placeholder.blade.php`, `DbExplorerCommand`, the `placeholder` config key, and `tests/*/ExampleTest.php`.
 - **Done when:** `composer dump-autoload && composer test` passes.
 

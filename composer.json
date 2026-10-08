@@ -32,12 +32,12 @@
     },
     "autoload": {
         "psr-4": {
-            "njrdevs\\DbExplorer\\": "src/"
+            "TacticalNinj4\\DbExplorer\\": "src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "njrdevs\\DbExplorer\\Tests\\": "tests/",
+            "TacticalNinj4\\DbExplorer\\Tests\\": "tests/",
             "Workbench\\App\\": "workbench/app/",
             "Workbench\\Database\\Factories\\": "workbench/database/factories/",
             "Workbench\\Database\\Seeders\\": "workbench/database/seeders/"
@@ -87,10 +87,10 @@
     "extra": {
         "laravel": {
             "providers": [
-                "njrdevs\\DbExplorer\\DbExplorerServiceProvider"
+                "TacticalNinj4\\DbExplorer\\DbExplorerServiceProvider"
             ],
             "aliases": {
-                "DbExplorer": "njrdevs\\DbExplorer\\Facades\\DbExplorer"
+                "DbExplorer": "TacticalNinj4\\DbExplorer\\Facades\\DbExplorer"
             }
         }
     },
