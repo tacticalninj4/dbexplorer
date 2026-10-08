@@ -49,8 +49,8 @@ class InstallCommand extends Command
         $this->step(
             '4. Give each role its own PostgreSQL login. The database grants are the real boundary (docs/security.md).',
             "Run this SQL and add matching connections to config/database.php. Then point\n".
-            "dbexplorer.connections at them (viewer => pgsql_readonly, editor => pgsql_editor, ...)\n".
-            "and dbexplorer.storage.connection at one whose search_path is the dbexplorer schema.\n\n".
+            "dbexplorer.connections at them (viewer => pgsql_readonly, editor => pgsql_editor, ...).\n".
+            "Recommended: set DBEXPLORER_STORAGE_CONNECTION to a connection with 'search_path' => 'dbexplorer'.\n\n".
             $this->roleRecipe(),
         );
 

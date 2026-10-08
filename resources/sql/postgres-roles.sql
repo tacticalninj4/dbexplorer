@@ -43,6 +43,19 @@ GRANT app_owner TO dbx_admin;
 --    and editor can't use. Point dbexplorer.storage.connection at it.
 CREATE SCHEMA dbexplorer AUTHORIZATION app_owner;
 
+-- If you keep DbExplorer's tables in public instead, steps 4 and 5 grant them to
+-- the viewer and editor. This takes them back. Step 5's default privileges
+-- grant every new dbx_ table again, so rerun it after each `php artisan migrate`.
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname = 'public' AND c.relname LIKE 'dbx\_%' AND c.relkind IN ('r', 'p', 'S')
+  LOOP
+    EXECUTE format('REVOKE ALL ON public.%I FROM dbx_viewer, dbx_editor', r.relname);
+  END LOOP;
+END $$;
+
 -- 8. Optional: keep sensitive columns from the viewer. A column REVOKE does
 --    nothing while a table-wide SELECT exists, so swap it for a column list.
 -- REVOKE SELECT ON public.users FROM dbx_viewer;

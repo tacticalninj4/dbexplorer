@@ -96,6 +96,19 @@ GRANT app_owner TO dbx_admin;
 --    and editor can't use. Point dbexplorer.storage.connection at it.
 CREATE SCHEMA dbexplorer AUTHORIZATION app_owner;
 
+-- If you keep DbExplorer's tables in public instead, steps 4 and 5 grant them to
+-- the viewer and editor. This takes them back. Step 5's default privileges
+-- grant every new dbx_ table again, so rerun it after each `php artisan migrate`.
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname = 'public' AND c.relname LIKE 'dbx\_%' AND c.relkind IN ('r', 'p', 'S')
+  LOOP
+    EXECUTE format('REVOKE ALL ON public.%I FROM dbx_viewer, dbx_editor', r.relname);
+  END LOOP;
+END $$;
+
 -- 8. Optional: keep sensitive columns from the viewer. A column REVOKE does
 --    nothing while a table-wide SELECT exists, so swap it for a column list.
 -- REVOKE SELECT ON public.users FROM dbx_viewer;
@@ -106,7 +119,10 @@ Notes:
 
 - **Timeouts** set with `ALTER ROLE` are session defaults, not caps: any session can `SET statement_timeout`. They catch connections that forget to set one.
 - **`pg_signal_backend`** lets `dbx_admin` cancel or terminate *any* non-superuser session, your app's included. Grant it only if you want that from the browser.
-- **The `dbexplorer` schema** keeps `dbx_audit_log` out of the editor's `DML ON ALL TABLES` grant. If you already migrated the `dbx_*` tables into `public`, move them (`ALTER TABLE ... SET SCHEMA dbexplorer`). `dbx_admin` still reaches them through `app_owner`, so for audit rows that no explorer login can touch, use a separate database for `storage.connection`.
+- **DbExplorer's own tables** (`dbx_audit_log`, `dbx_runs`, ...) must not be writable by the explorer logins, or an editor could rewrite the audit log from the SQL editor. Two layouts:
+  - *Recommended:* keep them in the `dbexplorer` schema (step 7), which the viewer and editor have no `USAGE` on, through a dedicated connection (below). Already migrated into `public`? Move them with `ALTER TABLE ... SET SCHEMA dbexplorer`.
+  - *Default* (`storage.connection` null): they land in `public`, and steps 4 and 5 grant them to the viewer and editor. The `DO` block after step 7 revokes that, but step 5's default privileges grant each new `dbx_` table again, so rerun the block after every `php artisan migrate`. Alternatively, replace steps 4 and 5 with grants on an explicit table list, or keep the app's tables in their own schema.
+  - Either way `dbx_admin` reaches them through `app_owner`. For audit rows no explorer login can touch, put `storage.connection` on a separate database. The default `hidden` patterns (`*.dbx_*`, `dbexplorer.*`) also keep these tables out of the UI, but that's best-effort, not a boundary.
 - **Functions** are executable by `PUBLIC` by default, and a `SECURITY DEFINER` function runs with its owner's privileges. Review those, or run `ALTER DEFAULT PRIVILEGES FOR ROLE app_owner REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC`.
 - **Extensions** like `dblink` and `postgres_fdw` open their own connections outside the read-only transaction. Don't grant them to the explorer logins.
 
@@ -129,7 +145,8 @@ Then add one connection per login to `config/database.php`, alongside your `pgsq
 // 'pgsql_editor' and 'pgsql_admin': the same, with dbx_editor / dbx_admin and their passwords.
 
 // DbExplorer's own tables: your usual login, but in the dbexplorer schema.
-'dbexplorer' => [
+// `search_path` is the key on Laravel 9 through 13 (`schema` still works as an alias).
+'dbexplorer_meta' => [
     'driver' => 'pgsql',
     'host' => env('DB_HOST', '127.0.0.1'),
     'port' => env('DB_PORT', '5432'),
@@ -143,7 +160,7 @@ Then add one connection per login to `config/database.php`, alongside your `pgsq
 ],
 ```
 
-And map them in `config/dbexplorer.php`:
+Set `DBEXPLORER_STORAGE_CONNECTION=dbexplorer_meta` in `.env` before running `php artisan migrate`, and map the role connections in `config/dbexplorer.php`:
 
 ```php
 'connections' => [
@@ -154,10 +171,6 @@ And map them in `config/dbexplorer.php`:
     ],
 ],
 
-'storage' => [
-    'connection' => 'dbexplorer',
-    // ...
-],
 ```
 
 ## 4. What the app-level checks do not guarantee

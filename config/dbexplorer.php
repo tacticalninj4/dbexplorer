@@ -109,9 +109,12 @@ return [
     | browsing. Queries that reference them are rejected on a best-effort
     | basis only; revoke access in the database for real enforcement.
     |
+    | `*.dbx_*` and `dbexplorer.*` keep DbExplorer's own tables (audit log,
+    | runs, ...) out of the UI, wherever the storage connection puts them.
+    |
     */
 
-    'hidden' => ['pg_toast*', '*.password_reset*', '*.personal_access_tokens'],
+    'hidden' => ['pg_toast*', '*.password_reset*', '*.personal_access_tokens', '*.dbx_*', 'dbexplorer.*'],
 
     /*
     |--------------------------------------------------------------------------
@@ -164,7 +167,8 @@ return [
 
     'storage' => [
         // Laravel connection name for the dbx_* tables. null uses the app default.
-        'connection' => null,
+        // Recommended: a connection whose search_path is a dedicated schema (docs/security.md).
+        'connection' => env('DBEXPLORER_STORAGE_CONNECTION'),
 
         // Filesystem disk for exports and other generated files. Must be private.
         'disk' => 'local',

@@ -62,11 +62,17 @@ Run the SQL from [docs/security.md](docs/security.md#3-postgresql-roles) (also p
 
 ### 3. Run the migrations
 
-Point `dbexplorer.storage.connection` at the connection for DbExplorer's own tables first, then:
+Recommended: keep DbExplorer's own tables (audit log, runs, ...) in the `dbexplorer` schema, out of reach of the viewer and editor logins. Add a `dbexplorer_meta` connection with `'search_path' => 'dbexplorer'` ([snippet](docs/security.md#3-postgresql-roles)) and point the package at it before migrating:
+
+```dotenv
+DBEXPLORER_STORAGE_CONNECTION=dbexplorer_meta
+```
 
 ```bash
 php artisan migrate
 ```
+
+Left unset, the tables go to your default connection's `public` schema; see [docs/security.md](docs/security.md#3-postgresql-roles) for the extra `REVOKE` that layout needs.
 
 ### 4. Define the gate
 
@@ -150,14 +156,14 @@ All keys live in `config/dbexplorer.php`.
 | `limits.{viewer,editor,admin}.rows` | `1000` / `5000` / `10000` | Maximum rows returned per role *(planned, M1)*. |
 | `limits.background.timeout` | `3600` | Statement timeout in seconds for queued jobs *(planned, M3)*. |
 | `limits.queries_per_minute` | `60` | The `dbexplorer` rate limiter, per user or per IP, for query execution *(planned, M1)*. |
-| `hidden` | `pg_toast*`, `*.password_reset*`, `*.personal_access_tokens` | Globs for schemas and tables hidden from browsing *(planned, M1)*. |
+| `hidden` | `pg_toast*`, `*.password_reset*`, `*.personal_access_tokens`, `*.dbx_*`, `dbexplorer.*` | Globs for schemas and tables hidden from browsing, including DbExplorer's own tables *(planned, M1)*. |
 | `masking` | `*.password`, `*.*token*`, `*.*secret*` | Globs for `table.column` values masked in grids and exports *(planned, M1)*. |
 | `queue.connection` | `null` | Queue connection for background work; null uses the app default *(planned, M3)*. |
 | `queue.queue` | `'default'` | Queue name for background work *(planned, M3)*. |
 | `backup.pg_dump_path` | `'pg_dump'` | The `pg_dump` binary *(planned, M4)*. |
 | `backup.disk` | `'local'` | Private disk for backups *(planned, M4)*. |
 | `backup.keep` | `7` | Backups kept per connection label *(planned, M4)*. |
-| `storage.connection` | `null` | Connection for the `dbx_*` tables; null uses the app default. |
+| `storage.connection` | `env('DBEXPLORER_STORAGE_CONNECTION')` | Connection for the `dbx_*` tables; null uses the app default. Recommended: a connection on the `dbexplorer` schema. |
 | `storage.disk` | `'local'` | Private disk for exports and other generated files *(planned, M3)*. |
 | `storage.file_ttl_hours` | `24` | Generated files are pruned after this many hours *(planned, M3)*. |
 | `audit.retention_days` | `90` | `dbx:prune` deletes older audit rows. Null keeps them forever. |

@@ -73,6 +73,7 @@ it('prints the gate and role resolver stubs', function () {
         ->toContain("Gate::define('viewDbExplorer', function (\$user) {")
         ->toContain('DbExplorer::roleUsing(function ($user, string $label) {')
         ->toContain('DBEXPLORER_ENABLED=true')
+        ->toContain('DBEXPLORER_STORAGE_CONNECTION')
         ->toContain('php artisan migrate')
         ->toContain('dbx:audit:verify');
 });

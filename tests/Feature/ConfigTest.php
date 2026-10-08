@@ -11,7 +11,7 @@ it('merges the package defaults', function () {
         ->and(config('dbexplorer.ip_allowlist'))->toBe([])
         ->and(config('dbexplorer.limits.viewer'))->toBe(['timeout' => 30, 'rows' => 1000])
         ->and(config('dbexplorer.limits.queries_per_minute'))->toBe(60)
-        ->and(config('dbexplorer.hidden'))->toContain('pg_toast*')
+        ->and(config('dbexplorer.hidden'))->toContain('pg_toast*', '*.dbx_*', 'dbexplorer.*')
         ->and(config('dbexplorer.masking'))->toContain('*.password');
 });
 
@@ -41,4 +41,16 @@ it('ships every top-level setting, with storage and audit defaults', function ()
         ->and($config['storage'])->toBe(['connection' => null, 'disk' => 'local', 'file_ttl_hours' => 24])
         ->and($config['audit']['retention_days'])->toBe(90)
         ->and($config['audit']['log_channel'])->toBeNull();
+});
+
+it('reads the storage connection from DBEXPLORER_STORAGE_CONNECTION', function () {
+    $_ENV['DBEXPLORER_STORAGE_CONNECTION'] = $_SERVER['DBEXPLORER_STORAGE_CONNECTION'] = 'dbexplorer_meta';
+
+    try {
+        $config = require __DIR__.'/../../config/dbexplorer.php';
+    } finally {
+        unset($_ENV['DBEXPLORER_STORAGE_CONNECTION'], $_SERVER['DBEXPLORER_STORAGE_CONNECTION']);
+    }
+
+    expect($config['storage']['connection'])->toBe('dbexplorer_meta');
 });
