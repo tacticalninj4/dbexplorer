@@ -12,10 +12,12 @@ use PDO;
 use PDOException;
 use PDOStatement;
 use TacticalNinj4\DbExplorer\Events\QueryExecuted;
+use TacticalNinj4\DbExplorer\Exceptions\HiddenObjectReferenced;
 use TacticalNinj4\DbExplorer\Exceptions\QueryFailed;
 use TacticalNinj4\DbExplorer\Facades\DbExplorer;
 use TacticalNinj4\DbExplorer\Models\QueryHistory;
 use TacticalNinj4\DbExplorer\Role;
+use TacticalNinj4\DbExplorer\Security\HiddenObjects;
 use TacticalNinj4\DbExplorer\Security\Masker;
 use TacticalNinj4\DbExplorer\Sql\Classifier;
 use TacticalNinj4\DbExplorer\Sql\Lexer;
@@ -31,17 +33,18 @@ use Throwable;
  *    to the transaction (S10). It is a query on purpose: once a read-only
  *    transaction has run a query, `SET TRANSACTION READ WRITE` fails (25001).
  *    A bare `SET LOCAL` doesn't count, so the viewer could still flip it.
- * 3. Statements the classifier calls read and that start with SELECT, VALUES,
+ * 3. The best-effort hidden-object check (S13), see rejectHiddenRelations().
+ * 4. Statements the classifier calls read and that start with SELECT, VALUES,
  *    TABLE, WITH or `(` run through `DECLARE dbx_cur NO SCROLL CURSOR FOR …` and
  *    `FETCH <cap + 1>`, so memory stays bounded by the row cap and one extra row
  *    sets `truncated`. PostgreSQL only accepts queries in DECLARE, so a statement
  *    the classifier misjudged fails rather than runs.
- * 4. Everything else runs through a native prepare (emulation and
+ * 5. Everything else runs through a native prepare (emulation and
  *    `ATTR_DISABLE_PREPARES` explicitly off for the statement, whatever the
  *    connection's options say). PostgreSQL refuses to prepare more than one
  *    command, which closes off `COMMIT; DROP …` (S8). Rows are capped while
  *    fetching, but the driver buffers the whole result of these statements.
- * 5. COMMIT for editors and admins. ROLLBACK for viewers (a read-only
+ * 6. COMMIT for editors and admins. ROLLBACK for viewers (a read-only
  *    transaction has nothing to commit, and rolling back also undoes any
  *    session `SET` it ran), for `EXPLAIN` and the `analyze` option, and on any error.
  *
@@ -191,6 +194,9 @@ final class QueryRunner
 
             $this->prepare($pdo, "SELECT set_config('statement_timeout', ?, true)")->execute([(string) ($timeout * 1000)]);
 
+            $prefixLines = 1;
+            $this->rejectHiddenRelations($pdo, $sql, $bindings);
+
             if ($explain !== null) {
                 $prefix = $explain === self::EXPLAIN_ANALYZE ? 'EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)' : 'EXPLAIN (FORMAT JSON)';
                 $cursor = false;
@@ -279,6 +285,128 @@ final class QueryRunner
             'notices' => array_slice($notices, 0, self::MAX_NOTICES),
             'noticesSupported' => $noticesSupported,
         ];
+    }
+
+    /**
+     * Best-effort hidden-object check (S13): plan the statement with
+     * `EXPLAIN (VERBOSE, FORMAT JSON)`, nothing runs, and reject it when any
+     * relation in the plan is hidden. Views are expanded in the plan, so their
+     * base tables count. Skipped when `dbexplorer.hidden` is empty.
+     *
+     * Only statements EXPLAIN accepts are checked: SELECT, VALUES, TABLE, WITH,
+     * INSERT, UPDATE, DELETE, MERGE, EXECUTE, DECLARE, CREATE TABLE … AS,
+     * CREATE MATERIALIZED VIEW … AS, and the statement inside a typed EXPLAIN.
+     * Others (COPY, CREATE VIEW, DO, PREPARE, ...) pass unchecked, and so do
+     * functions that read a hidden table: the plan only shows the call.
+     * Database grants are the real enforcement (docs/security.md).
+     *
+     * @param  array<int|string, scalar|null>  $bindings
+     */
+    private function rejectHiddenRelations(PDO $pdo, string $sql, array $bindings): void
+    {
+        $patterns = array_filter((array) config('dbexplorer.hidden', []), fn (mixed $pattern): bool => is_string($pattern) && $pattern !== '');
+        $target = $patterns === [] ? null : $this->explainable($sql);
+
+        if ($target === null) {
+            return;
+        }
+
+        $statement = $this->prepare($pdo, "EXPLAIN (VERBOSE, FORMAT JSON)\n".$target);
+        $this->bind($statement, $bindings);
+        $statement->execute();
+        $plan = json_decode((string) $statement->fetchColumn(), true);
+        $statement->closeCursor();
+
+        $hidden = new HiddenObjects;
+
+        foreach ($this->relations(is_array($plan) ? $plan : []) as [$schema, $name]) {
+            if ($hidden->isHidden($schema, $name)) {
+                throw HiddenObjectReferenced::relation($schema, $name, $sql);
+            }
+        }
+    }
+
+    /**
+     * The part of `$sql` that EXPLAIN accepts, or null when it accepts none.
+     */
+    private function explainable(string $sql): ?string
+    {
+        $words = [];
+        $depth = 0;
+        $start = null;
+
+        foreach (Lexer::tokens($sql) as $token) {
+            if (Lexer::isTrivia($token)) {
+                continue;
+            }
+
+            $word = $token['type'] === Lexer::WORD || $token['type'] === Lexer::OPEN_PAREN || $token['type'] === Lexer::CLOSE_PAREN
+                ? strtoupper($token['text'])
+                : '';
+
+            if ($words === [] && $word === 'EXPLAIN') {
+                $start = 'options';
+                $words[] = $word;
+
+                continue;
+            }
+
+            // Skip a typed EXPLAIN's options: `(…)` or ANALYZE / VERBOSE.
+            if ($start === 'options') {
+                if ($word === '(' || $depth > 0) {
+                    $depth += $word === '(' ? 1 : ($word === ')' ? -1 : 0);
+
+                    continue;
+                }
+
+                if (in_array($word, ['ANALYZE', 'ANALYSE', 'VERBOSE'], true)) {
+                    continue;
+                }
+
+                return $this->explainable(substr($sql, $token['offset']));
+            }
+
+            $words[] = $word;
+
+            if ($word === '(' && count($words) > 1) {
+                $depth++;
+            } elseif ($word === ')') {
+                $depth--;
+            } elseif ($words[0] === 'CREATE' && $word === 'AS' && $depth === 0) {
+                $kind = array_values(array_diff(array_slice($words, 1), ['GLOBAL', 'LOCAL', 'TEMP', 'TEMPORARY', 'UNLOGGED']));
+
+                return ($kind[0] ?? '') === 'TABLE' || (($kind[0] ?? '') === 'MATERIALIZED' && ($kind[1] ?? '') === 'VIEW') ? $sql : null;
+            }
+
+            if (count($words) === 1 && $word !== 'CREATE') {
+                return in_array($word, ['SELECT', 'VALUES', 'TABLE', 'WITH', '(', 'INSERT', 'UPDATE', 'DELETE', 'MERGE', 'EXECUTE', 'DECLARE'], true) ? $sql : null;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Every [schema, relation] an EXPLAIN (VERBOSE, FORMAT JSON) plan touches.
+     *
+     * @param  array<mixed>  $node
+     * @return list<array{0: string, 1: string}>
+     */
+    private function relations(array $node): array
+    {
+        $found = [];
+
+        if (is_string($node['Relation Name'] ?? null) && is_string($node['Schema'] ?? null)) {
+            $found[] = [$node['Schema'], $node['Relation Name']];
+        }
+
+        foreach ($node as $child) {
+            if (is_array($child)) {
+                array_push($found, ...$this->relations($child));
+            }
+        }
+
+        return $found;
     }
 
     private function connection(string $name): Connection
@@ -507,6 +635,7 @@ final class QueryRunner
                 'truncated' => $result !== null && $result['truncated'] ? true : null,
                 'bindings' => $bindings === [] ? null : count($bindings),
                 'sqlstate' => $failure?->sqlState,
+                'hidden_object' => $failure instanceof HiddenObjectReferenced ? $failure->relation : null,
             ], fn (mixed $value): bool => $value !== null),
         ];
 
