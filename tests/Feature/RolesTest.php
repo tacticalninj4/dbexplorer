@@ -20,7 +20,7 @@ beforeEach(function () {
     ]]);
 
     // A {label} route behind the package's own middleware stack, standing in for the label APIs.
-    $route = Route::getRoutes()->getByName('dbexplorer.ping');
+    $route = Route::getRoutes()->getByName('dbexplorer.me');
     expect($route)->not->toBeNull();
 
     Route::middleware($route->gatherMiddleware())
@@ -118,7 +118,7 @@ it('refuses a callback result that is not a role', function (mixed $result) {
 it('does not resolve a role on routes without a label', function () {
     DbExplorer::roleUsing(fn (): ?string => null);
 
-    $this->actingAs(makeUser())->getJson('/dbexplorer/api/ping')->assertOk();
+    $this->actingAs(makeUser())->getJson('/dbexplorer/api/me')->assertOk();
 });
 
 it('runs role resolution after the gate', function () {

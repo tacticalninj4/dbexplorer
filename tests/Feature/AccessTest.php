@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Route;
 use TacticalNinj4\DbExplorer\Http\Middleware\Authorize;
+use TacticalNinj4\DbExplorer\Http\Middleware\ContentSecurityPolicy;
 use TacticalNinj4\DbExplorer\Http\Middleware\IpAllowlist;
 use TacticalNinj4\DbExplorer\Http\Middleware\ResolveRole;
 use Workbench\App\Models\User;
@@ -14,18 +15,18 @@ use Workbench\App\Models\User;
 it('S1 registers the routes when enabled', function () {
     app()['env'] = 'local';
 
-    expect(Route::has('dbexplorer.ping'))->toBeTrue();
+    expect(Route::has('dbexplorer.me'))->toBeTrue();
 
-    $this->actingAs(makeUser())->getJson('/dbexplorer/api/ping')->assertOk()->assertExactJson(['ok' => true]);
+    $this->actingAs(makeUser())->getJson('/dbexplorer/api/me')->assertOk()->assertJsonPath('user.name', 'Dev');
 });
 
 it('S1 registers no routes when disabled', function () {
     $this->bootWith(['dbexplorer.enabled' => false]);
     app()['env'] = 'local';
 
-    expect(Route::has('dbexplorer.ping'))->toBeFalse();
+    expect(Route::has('dbexplorer.me'))->toBeFalse();
 
-    $this->actingAs(makeUser())->getJson('/dbexplorer/api/ping')->assertNotFound();
+    $this->actingAs(makeUser())->getJson('/dbexplorer/api/me')->assertNotFound();
 });
 
 // S2: the viewDbExplorer gate, or local-only without one.
@@ -33,33 +34,33 @@ it('S1 registers no routes when disabled', function () {
 it('S2 allows the local environment when no gate is defined', function () {
     app()['env'] = 'local';
 
-    $this->actingAs(makeUser())->getJson('/dbexplorer/api/ping')->assertOk();
+    $this->actingAs(makeUser())->getJson('/dbexplorer/api/me')->assertOk();
 });
 
 it('S2 denies everyone outside local when no gate is defined', function (string $env) {
     app()['env'] = $env;
 
-    $this->actingAs(makeUser())->getJson('/dbexplorer/api/ping')->assertForbidden();
+    $this->actingAs(makeUser())->getJson('/dbexplorer/api/me')->assertForbidden();
 })->with(['production', 'staging', 'testing']);
 
 it('S2 respects a host gate that allows the user', function () {
     app()['env'] = 'production';
     Gate::define('viewDbExplorer', fn (User $user): bool => $user->email === 'dba@example.com');
 
-    $this->actingAs(makeUser(1, 'dba@example.com'))->getJson('/dbexplorer/api/ping')->assertOk();
+    $this->actingAs(makeUser(1, 'dba@example.com'))->getJson('/dbexplorer/api/me')->assertOk();
 });
 
 it('S2 respects a host gate that denies the user, even in local', function () {
     app()['env'] = 'local';
     Gate::define('viewDbExplorer', fn (User $user): bool => $user->email === 'dba@example.com');
 
-    $this->actingAs(makeUser(2, 'intern@example.com'))->getJson('/dbexplorer/api/ping')->assertForbidden();
+    $this->actingAs(makeUser(2, 'intern@example.com'))->getJson('/dbexplorer/api/me')->assertForbidden();
 });
 
 it('S2 rejects unauthenticated requests', function () {
     app()['env'] = 'local';
 
-    $this->getJson('/dbexplorer/api/ping')->assertUnauthorized();
+    $this->getJson('/dbexplorer/api/me')->assertUnauthorized();
 });
 
 it('S2 does not let guests through a gate when auth middleware is removed', function () {
@@ -67,7 +68,7 @@ it('S2 does not let guests through a gate when auth middleware is removed', func
     app()['env'] = 'production';
     Gate::define('viewDbExplorer', fn (User $user): bool => true);
 
-    $this->getJson('/dbexplorer/api/ping')->assertForbidden();
+    $this->getJson('/dbexplorer/api/me')->assertForbidden();
 });
 
 // S3: prefix, domain and middleware are configurable.
@@ -76,22 +77,23 @@ it('S3 serves the routes under a custom prefix only', function () {
     $this->bootWith(['dbexplorer.path' => 'admin/database']);
     app()['env'] = 'local';
 
-    $this->actingAs(makeUser())->getJson('/admin/database/api/ping')->assertOk();
-    $this->actingAs(makeUser())->getJson('/dbexplorer/api/ping')->assertNotFound();
+    $this->actingAs(makeUser())->getJson('/admin/database/api/me')->assertOk();
+    $this->actingAs(makeUser())->getJson('/dbexplorer/api/me')->assertNotFound();
 });
 
 it('S3 serves the routes on the configured domain only', function () {
     $this->bootWith(['dbexplorer.domain' => 'db.example.com']);
     app()['env'] = 'local';
 
-    $this->actingAs(makeUser())->getJson('http://db.example.com/dbexplorer/api/ping')->assertOk();
-    $this->actingAs(makeUser())->getJson('http://www.example.com/dbexplorer/api/ping')->assertNotFound();
+    $this->actingAs(makeUser())->getJson('http://db.example.com/dbexplorer/api/me')->assertOk();
+    $this->actingAs(makeUser())->getJson('http://www.example.com/dbexplorer/api/me')->assertNotFound();
 });
 
 it('S3 applies the configured middleware stack in order', function () {
     $this->bootWith(['dbexplorer.middleware' => ['web', 'auth:web', 'verified']]);
 
-    expect(Route::getRoutes()->getByName('dbexplorer.ping')?->gatherMiddleware())->toBe([
+    expect(Route::getRoutes()->getByName('dbexplorer.me')?->gatherMiddleware())->toBe([
+        ContentSecurityPolicy::class,
         IpAllowlist::class,
         'web',
         'auth:web',
@@ -106,7 +108,7 @@ it('S3 runs custom middleware that can reject the request', function () {
     Route::aliasMiddleware('deny-all', fn () => abort(418));
     app()['env'] = 'local';
 
-    $this->actingAs(makeUser())->getJson('/dbexplorer/api/ping')->assertStatus(418);
+    $this->actingAs(makeUser())->getJson('/dbexplorer/api/me')->assertStatus(418);
 });
 
 // S4: optional IP / CIDR allowlist.
@@ -116,7 +118,7 @@ it('S4 allows any IP when the allowlist is empty', function () {
 
     $this->actingAs(makeUser())
         ->withServerVariables(['REMOTE_ADDR' => '198.51.100.23'])
-        ->getJson('/dbexplorer/api/ping')
+        ->getJson('/dbexplorer/api/me')
         ->assertOk();
 });
 
@@ -126,7 +128,7 @@ it('S4 allows IPs inside the allowlist', function (string $ip) {
 
     $this->actingAs(makeUser())
         ->withServerVariables(['REMOTE_ADDR' => $ip])
-        ->getJson('/dbexplorer/api/ping')
+        ->getJson('/dbexplorer/api/me')
         ->assertOk();
 })->with(['10.1.2.3', '203.0.113.7', '2001:db8::1']);
 
@@ -136,7 +138,7 @@ it('S4 rejects IPs outside the allowlist', function (string $ip) {
 
     $this->actingAs(makeUser())
         ->withServerVariables(['REMOTE_ADDR' => $ip])
-        ->getJson('/dbexplorer/api/ping')
+        ->getJson('/dbexplorer/api/me')
         ->assertForbidden();
 })->with(['11.0.0.1', '203.0.113.8', '2001:db9::1', '127.0.0.1']);
 
@@ -144,7 +146,7 @@ it('S4 rejects a disallowed IP before authentication runs', function () {
     config(['dbexplorer.ip_allowlist' => ['10.0.0.0/8']]);
 
     $this->withServerVariables(['REMOTE_ADDR' => '198.51.100.23'])
-        ->getJson('/dbexplorer/api/ping')
+        ->getJson('/dbexplorer/api/me')
         ->assertForbidden();
 });
 
@@ -154,6 +156,6 @@ it('S4 fails closed when the allowlist has no usable entries', function () {
 
     $this->actingAs(makeUser())
         ->withServerVariables(['REMOTE_ADDR' => '10.1.2.3'])
-        ->getJson('/dbexplorer/api/ping')
+        ->getJson('/dbexplorer/api/me')
         ->assertForbidden();
 });

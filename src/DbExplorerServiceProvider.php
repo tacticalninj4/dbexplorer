@@ -13,6 +13,7 @@ use TacticalNinj4\DbExplorer\Audit\AuditLog;
 use TacticalNinj4\DbExplorer\Console\AuditVerifyCommand;
 use TacticalNinj4\DbExplorer\Console\PruneCommand;
 use TacticalNinj4\DbExplorer\Http\Middleware\Authorize;
+use TacticalNinj4\DbExplorer\Http\Middleware\ContentSecurityPolicy;
 use TacticalNinj4\DbExplorer\Http\Middleware\IpAllowlist;
 use TacticalNinj4\DbExplorer\Http\Middleware\ResolveRole;
 
@@ -88,7 +89,7 @@ class DbExplorerServiceProvider extends ServiceProvider
             'domain' => config('dbexplorer.domain'),
             'prefix' => config('dbexplorer.path', 'dbexplorer'),
             'middleware' => array_merge(
-                [IpAllowlist::class],
+                [ContentSecurityPolicy::class, IpAllowlist::class],
                 (array) config('dbexplorer.middleware', []),
                 [Authorize::class, ResolveRole::class],
             ),
