@@ -1,6 +1,8 @@
 laravel: '@testbench'
 
 providers:
+  # Lets Larastan, which boots Testbench outside its CLI, see the package's views.
+  - TacticalNinj4\DbExplorer\DbExplorerServiceProvider
   # - Workbench\App\Providers\WorkbenchServiceProvider
 
 migrations:
