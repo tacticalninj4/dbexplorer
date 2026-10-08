@@ -121,9 +121,15 @@ return [
     | Column masking
     |--------------------------------------------------------------------------
     |
-    | Glob patterns for `table.column` names whose values are masked in
-    | grids, edit views and exports. Only admins can unmask, and every
-    | unmask is audited.
+    | Rules for columns whose values are masked in grids, edit views and
+    | exports. A string is a case-insensitive glob (`*` only) on
+    | `schema.table.column`; with N dots it matches the last N+1 parts, so
+    | `users.ssn` means that table in any schema and `ssn` any such column.
+    | A callable `fn (string $schema, string $table, string $column): bool`
+    | adds a custom rule; prefer `[Rules::class, 'method']`, as closures
+    | break `config:cache`. Expression columns match by column name only.
+    | Aliased columns (`password AS x`) are not masked: use a column REVOKE
+    | (docs/security.md). Only admins can unmask, and every unmask is audited.
     |
     */
 
