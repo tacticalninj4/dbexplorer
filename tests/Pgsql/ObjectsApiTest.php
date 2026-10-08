@@ -55,17 +55,18 @@ it('lists the objects of a schema and describes one by name', function (string $
         ->and(apiAs($this, $role, 'objects/fixture/measurements_2025')->json('data.parent'))->toBe(['schema' => 'fixture', 'name' => 'measurements']);
 })->with(['viewer', 'editor', 'admin']);
 
-it('serves the structure tabs of a table', function (string $tab, string $object, Closure $assert) {
-    $assert(apiAs($this, 'viewer', "objects/fixture/{$object}/{$tab}")->assertOk()->json('data'));
-})->with([
-    'columns' => ['columns', 'users', fn (array $data) => expect(array_column($data, 'name'))->toBe(['id', 'email', 'name', 'password', 'api_token', 'mood', 'address', 'created_at'])],
-    'indexes' => ['indexes', 'users', fn (array $data) => expect(array_column($data, 'name'))->toContain('users_pkey', 'users_lower_name_idx')],
-    'constraints' => ['constraints', 'posts', fn (array $data) => expect(array_column($data, 'type', 'name'))->toMatchArray(['posts_pkey' => 'primary_key', 'posts_user_id_fkey' => 'foreign_key'])],
-    'triggers' => ['triggers', 'posts', fn (array $data) => expect(array_column($data, 'name'))->toBe(['posts_log_change'])],
-    'ddl' => ['ddl', 'users', fn (array $data) => expect($data['ddl'])->toStartWith('CREATE TABLE fixture.users (')],
-    'stats' => ['stats', 'big', fn (array $data) => expect($data['estimated_rows'])->toBeGreaterThan(900000)],
-    'definition' => ['definition', 'published_posts', fn (array $data) => expect($data['definition'])->toContain('published_at IS NOT NULL')],
-]);
+it('serves the structure tabs of tables and views', function () {
+    $tab = fn (string $path): array => apiAs($this, 'viewer', "objects/fixture/{$path}")->assertOk()->json('data');
+
+    expect(array_column($tab('users/columns'), 'name'))->toBe(['id', 'email', 'name', 'password', 'api_token', 'mood', 'address', 'created_at'])
+        ->and(array_column($tab('users/indexes'), 'name'))->toContain('users_pkey', 'users_lower_name_idx')
+        ->and(array_column($tab('posts/constraints'), 'type', 'name'))->toMatchArray(['posts_pkey' => 'primary_key', 'posts_user_id_fkey' => 'foreign_key'])
+        ->and(array_column($tab('posts/triggers'), 'name'))->toBe(['posts_log_change'])
+        ->and($tab('users/ddl')['ddl'])->toStartWith('CREATE TABLE fixture.users (')
+        ->and($tab('big/stats')['estimated_rows'])->toBeGreaterThan(900000)
+        ->and($tab('published_posts/definition')['definition'])->toContain('published_at IS NOT NULL')
+        ->and(array_column($tab('published_posts/columns'), 'name'))->toBe(['id', 'title', 'author', 'published_at']);
+});
 
 it('describes a function by its URL-encoded signature', function () {
     expect(apiAs($this, 'viewer', 'functions/fixture/'.rawurlencode('post_count(bigint)'))->assertOk()->json('data'))

@@ -343,27 +343,27 @@ it('rejects a direction other than asc or desc', function (mixed $direction) {
     expect(rowsErrors(fn () => postsQuery()->build(['sort' => 'id', 'direction' => $direction], 1000)))->toHaveKey('direction');
 })->with(['DESC', 'up', 'desc; DROP TABLE x', [['desc']]]);
 
-it('S12 rejects a tampered or foreign cursor', function (Closure $cursor, array $params = []) {
-    expect(rowsErrors(fn () => postsQuery()->build($params + ['cursor' => $cursor()], 1000)))->toHaveKey('cursor');
+it('S12 rejects a tampered or foreign cursor', function (mixed $cursor, array $params = []) {
+    expect(rowsErrors(fn () => postsQuery()->build($params + ['cursor' => $cursor], 1000)))->toHaveKey('cursor');
 })->with([
-    'not base64url' => [fn () => 'abc+/=='],
-    'garbage' => [fn () => '!!!'],
-    'not JSON' => [fn () => rtrim(strtr(base64_encode('nope'), '+/', '-_'), '=')],
-    'JSON list' => [fn () => rtrim(strtr(base64_encode('[1]'), '+/', '-_'), '=')],
-    'no values' => [fn () => rtrim(strtr(base64_encode('{"s":null,"d":"asc"}'), '+/', '-_'), '=')],
-    'too many values' => [fn () => RowsQuery::encodeCursor([1, 2], null, 'asc')],
-    'too few values' => [fn () => RowsQuery::encodeCursor([], null, 'asc')],
-    'NULL key value' => [fn () => RowsQuery::encodeCursor([null], null, 'asc')],
-    'nested value' => [fn () => rtrim(strtr(base64_encode('{"v":[[1]],"s":null,"d":"asc"}'), '+/', '-_'), '=')],
-    'object values' => [fn () => rtrim(strtr(base64_encode('{"v":{"id":1},"s":null,"d":"asc"}'), '+/', '-_'), '=')],
-    'NUL byte value' => [fn () => RowsQuery::encodeCursor(["1\0"], null, 'asc')],
-    'made for another sort' => [fn () => RowsQuery::encodeCursor(['Post 1', 1], 'title', 'asc')],
-    'made for another direction' => [fn () => RowsQuery::encodeCursor([1], null, 'desc')],
-    'NULL in a NOT NULL sort column' => [fn () => RowsQuery::encodeCursor([null, 1], 'title', 'asc'), ['sort' => 'title']],
-    'NULL in the key of a nullable sort' => [fn () => RowsQuery::encodeCursor(['x', null], 'published_at', 'asc'), ['sort' => 'published_at']],
-    'too long' => [fn () => str_repeat('A', RowsQuery::MAX_CURSOR_LENGTH + 1)],
-    'array' => [fn () => ['x']],
-    'injection' => [fn () => RowsQuery::encodeCursor(['1) OR (1=1'], null, 'asc')."'; DROP TABLE x"],
+    'not base64url' => ['abc+/=='],
+    'garbage' => ['!!!'],
+    'not JSON' => [rtrim(strtr(base64_encode('nope'), '+/', '-_'), '=')],
+    'JSON list' => [rtrim(strtr(base64_encode('[1]'), '+/', '-_'), '=')],
+    'no values' => [rtrim(strtr(base64_encode('{"s":null,"d":"asc"}'), '+/', '-_'), '=')],
+    'too many values' => [RowsQuery::encodeCursor([1, 2], null, 'asc')],
+    'too few values' => [RowsQuery::encodeCursor([], null, 'asc')],
+    'NULL key value' => [RowsQuery::encodeCursor([null], null, 'asc')],
+    'nested value' => [rtrim(strtr(base64_encode('{"v":[[1]],"s":null,"d":"asc"}'), '+/', '-_'), '=')],
+    'object values' => [rtrim(strtr(base64_encode('{"v":{"id":1},"s":null,"d":"asc"}'), '+/', '-_'), '=')],
+    'NUL byte value' => [RowsQuery::encodeCursor(["1\0"], null, 'asc')],
+    'made for another sort' => [RowsQuery::encodeCursor(['Post 1', 1], 'title', 'asc')],
+    'made for another direction' => [RowsQuery::encodeCursor([1], null, 'desc')],
+    'NULL in a NOT NULL sort column' => [RowsQuery::encodeCursor([null, 1], 'title', 'asc'), ['sort' => 'title']],
+    'NULL in the key of a nullable sort' => [RowsQuery::encodeCursor(['x', null], 'published_at', 'asc'), ['sort' => 'published_at']],
+    'too long' => [str_repeat('A', RowsQuery::MAX_CURSOR_LENGTH + 1)],
+    'array' => [['x']],
+    'injection' => [RowsQuery::encodeCursor(['1) OR (1=1'], null, 'asc')."'; DROP TABLE x"],
 ]);
 
 it('S12 binds a cursor value carrying SQL instead of running it', function () {
