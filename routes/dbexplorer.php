@@ -10,6 +10,7 @@ use TacticalNinj4\DbExplorer\Http\Controllers\MeController;
 use TacticalNinj4\DbExplorer\Http\Controllers\ObjectsController;
 use TacticalNinj4\DbExplorer\Http\Controllers\QueryController;
 use TacticalNinj4\DbExplorer\Http\Controllers\RowsController;
+use TacticalNinj4\DbExplorer\Http\Controllers\RowWriteController;
 use TacticalNinj4\DbExplorer\Http\Controllers\ShellController;
 
 // Loaded by DbExplorerServiceProvider inside the configured domain, prefix and
@@ -42,6 +43,9 @@ Route::prefix('api/{label}')->middleware('throttle:dbexplorer')->group(function 
     Route::get('objects/{schema}/{name}/definition', [ObjectsController::class, 'definition'])->name('object.definition');
     Route::get('functions/{schema}/{signature}', [ObjectsController::class, 'showFunction'])->name('function');
     Route::get('rows/{schema}/{name}', RowsController::class)->name('rows');
+    Route::post('rows/{schema}/{name}', [RowWriteController::class, 'insert'])->name('rows.insert');
+    Route::patch('rows/{schema}/{name}', [RowWriteController::class, 'update'])->name('rows.update');
+    Route::delete('rows/{schema}/{name}', [RowWriteController::class, 'delete'])->name('rows.delete');
     Route::post('query', [QueryController::class, 'run'])->name('query');
     Route::get('history', [QueryController::class, 'history'])->name('history');
 });

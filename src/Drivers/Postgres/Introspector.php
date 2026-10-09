@@ -286,6 +286,56 @@ class Introspector
     }
 
     /**
+     * What RowWriter needs to edit rows of a table:
+     *
+     * - `columns`: the columns the login can SELECT, in order, each with
+     *   `cast`, the type without a modifier (`format_type(type, -1)`, e.g.
+     *   `bpchar` or `character varying`), which values are cast to before the
+     *   column's own assignment rules apply, and `writable`, false for
+     *   generated and GENERATED ALWAYS identity columns.
+     * - `primary_key`: the primary key's columns, or null when there is none,
+     *   when the login can't SELECT all of them, or for views, materialized
+     *   views and foreign tables.
+     *
+     * @return array{columns: list<array{name: string, cast: string, writable: bool}>, primary_key: list<string>|null}
+     *
+     * @throws ObjectNotFoundException
+     */
+    public function writeTarget(string $schema, string $name): array
+    {
+        $relation = $this->relation($schema, $name, ['r', 'p', 'v', 'm', 'f']);
+
+        $columns = array_map(fn (array $row): array => [
+            'name' => (string) $row['name'],
+            'cast' => (string) $row['cast'],
+            'writable' => (bool) $row['writable'],
+        ], $this->select(
+            'SELECT a.attname AS name, format_type(a.atttypid, -1) AS cast, a.attgenerated = \'\' AND a.attidentity <> \'a\' AS writable
+            FROM pg_attribute a
+            WHERE a.attrelid = ? AND a.attnum > 0 AND NOT a.attisdropped AND has_column_privilege(a.attrelid, a.attnum, \'SELECT\')
+            ORDER BY a.attnum',
+            [$relation['oid']],
+        ));
+
+        $key = in_array($relation['kind'], ['r', 'p'], true) ? $this->selectValue(
+            'SELECT json_agg(a.attname ORDER BY k.ord)::text
+            FROM pg_constraint con, unnest(con.conkey) WITH ORDINALITY k(attnum, ord)
+            JOIN pg_attribute a ON a.attnum = k.attnum
+            WHERE con.conrelid = ? AND con.contype = \'p\' AND a.attrelid = con.conrelid',
+            [$relation['oid']],
+        ) : null;
+
+        $key = $key === null ? null : self::jsonList($key);
+        $selectable = array_column($columns, 'name');
+
+        if ($key === [] || ($key !== null && array_diff($key, $selectable) !== [])) {
+            $key = null;
+        }
+
+        return ['columns' => $columns, 'primary_key' => $key];
+    }
+
+    /**
      * Visible objects whose name contains $term, case-insensitively, across
      * every visible schema. Exact matches come first, then earlier matches.
      *
