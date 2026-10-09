@@ -47,7 +47,7 @@ it('S20 builds the dump command as an argument array, with the password only in 
     $command = $tool->command();
     $env = $tool->env();
 
-    expect($command)->toBeList()
+    expect($command)->toBe(array_values($command)) // a list; Pest 1 has no toBeList()
         ->and($command[0])->toBe('/usr/bin/pg_dump')
         ->and(in_array('--no-password', $command, true))->toBeTrue();
 
