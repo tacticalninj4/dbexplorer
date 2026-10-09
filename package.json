@@ -9,6 +9,13 @@
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "6.20.3",
+    "@codemirror/lang-sql": "6.10.0",
+    "@codemirror/language": "6.12.4",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.13",
+    "@lezer/highlight": "1.2.4",
+    "codemirror": "6.0.2",
     "vue": "3.5.43",
     "vue-router": "4.6.4"
   },
@@ -22,5 +29,8 @@
     "typescript-eslint": "8.70.1",
     "vite": "8.3.1",
     "vue-tsc": "3.3.11"
+  },
+  "overrides": {
+    "@lezer/lr": "1.4.10"
   }
 }
