@@ -18,13 +18,17 @@ import { formatDuration, formatNumber } from '../composables/format';
 import { findConnection } from '../composables/session';
 import { readStorage, writeStorage } from '../composables/storage';
 import { catalogCompletion } from '../sql/completion';
-import { classify, locate, positionToIndex, statementAt } from '../sql/statements';
+import { locate, positionToIndex, statementAt } from '../sql/statements';
 import type { Classification, QueryError, QueryResponse } from '../types';
 
 /**
  * /:label/sql: CodeMirror 6 with PostgreSQL highlighting and catalog
  * completion, tabs kept in localStorage per connection, and results, plans
  * and errors below. Runs one statement: the selection, or the one at the cursor.
+ *
+ * Confirmations are server-driven (M2.2): the statement is sent as typed, and
+ * the API's 409 (confirm), 423 (password, via api()) and 403 (permissions)
+ * responses tell the UI what to ask for. The SPA classifies nothing itself.
  */
 const route = useRoute();
 const label = String(route.params.label);
@@ -39,7 +43,7 @@ interface Tab {
 }
 
 interface Run {
-    status: 'running' | 'done' | 'failed';
+    status: 'running' | 'confirm' | 'done' | 'failed';
     sql: string;
     explain: ExplainMode;
     result?: QueryResponse;
@@ -249,7 +253,12 @@ function onTabKeydown(event: KeyboardEvent): void {
     void nextTick(() => document.getElementById(`dbx-sql-tab-${tab.id}`)?.focus());
 }
 
-/** Run, after a confirmation when the statement looks like it writes. */
+/**
+ * Run the statement at the cursor (or the selection). No client-side gating:
+ * reads run directly, and the server answers anything else with 409 (confirm
+ * first), 423 (password confirmation, handled by the shared modal in api()) or
+ * 403 (DDL from a non-admin), each of which the UI just follows.
+ */
 function start(explain: ExplainMode): void {
     const editor = view.value;
     if (!editor || running.value) {
@@ -263,27 +272,29 @@ function start(explain: ExplainMode): void {
         return;
     }
 
-    const classification = classify(text);
-
-    // Plain EXPLAIN only plans; everything else may execute the statement.
-    if (explain !== 'plain' && (classification === 'dml' || classification === 'ddl' || classification === 'destructive')) {
-        confirm.value = { sql: text, offset, explain, classification };
-        return;
-    }
-
-    void execute(text, offset, explain);
+    void execute(text, offset, explain, false);
 }
 
+/** "Run it" in the confirmation dialog: re-send the same statement, confirmed. */
 function confirmed(): void {
     const pending = confirm.value;
     confirm.value = null;
 
     if (pending) {
-        void execute(pending.sql, pending.offset, pending.explain);
+        void execute(pending.sql, pending.offset, pending.explain, true);
     }
 }
 
-async function execute(sql: string, offset: number, explain: ExplainMode): Promise<void> {
+/** Cancelled confirmation: drop the waiting run too. */
+function cancelConfirm(): void {
+    confirm.value = null;
+
+    if (run.value?.status === 'confirm') {
+        runs.delete(activeId.value);
+    }
+}
+
+async function execute(sql: string, offset: number, explain: ExplainMode, confirmedRequest: boolean): Promise<void> {
     const tabId = activeId.value;
     runs.set(tabId, { status: 'running', sql, explain });
     view.value?.dispatch({ effects: setError.of(null) });
@@ -291,11 +302,22 @@ async function execute(sql: string, offset: number, explain: ExplainMode): Promi
     try {
         const response = await api<{ data: QueryResponse }>(`${segment(label)}/query`, {
             method: 'POST',
-            body: { sql, explain, unmask: unmask.value ? true : undefined },
+            body: { sql, explain, unmask: unmask.value ? true : undefined, confirm: confirmedRequest ? true : undefined },
         });
         runs.set(tabId, { status: 'done', sql, explain, result: response.data });
         resultTab.value = response.data.plan ? 'plan' : 'results';
     } catch (e) {
+        const required = e instanceof ApiError && !confirmedRequest ? e.confirmationRequired : null;
+
+        if (required) {
+            // The server refuses to run it until the user confirms: show what it
+            // classified, then re-send with confirm: true. A destructive verdict
+            // continues into the password modal through api()'s 423 handling.
+            runs.set(tabId, { status: 'confirm', sql, explain });
+            confirm.value = { sql, offset, explain, classification: required.classification };
+            return;
+        }
+
         const queryError = e instanceof ApiError ? e.queryError : null;
         const status = e instanceof ApiError ? e.status : 0;
         runs.set(tabId, {
@@ -421,6 +443,7 @@ const modKey = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl';
             <section class="flex min-h-0 flex-1 flex-col" aria-label="Result" aria-live="polite">
                 <p v-if="!run" class="p-4 text-sm text-zinc-500">Run a statement to see its result here.</p>
                 <p v-else-if="run.status === 'running'" class="p-4 text-sm text-zinc-500">Running…</p>
+                <p v-else-if="run.status === 'confirm'" class="p-4 text-sm text-zinc-500">Waiting for your confirmation…</p>
 
                 <div v-else-if="run.status === 'failed' && run.error" role="alert" class="m-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-100">
                     <p class="flex flex-wrap items-baseline gap-2">
@@ -469,7 +492,7 @@ const modKey = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl';
             </section>
         </div>
 
-        <ModalDialog :open="confirm !== null" title="Run this statement?" @close="confirm = null">
+        <ModalDialog :open="confirm !== null" title="Run this statement?" @close="cancelConfirm">
             <template v-if="confirm">
                 <p class="mt-2 text-sm">
                     This statement
@@ -477,9 +500,12 @@ const modKey = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl';
                     {{ classificationText[confirm.classification] }}.
                     <template v-if="confirm.explain === 'analyze'"> EXPLAIN ANALYZE runs it, then rolls it back.</template>
                 </p>
+                <p v-if="confirm.classification === 'destructive'" class="mt-2 text-sm text-amber-800 dark:text-amber-300">
+                    It is destructive, so you will also be asked for your password.
+                </p>
                 <pre class="mt-3 max-h-48 overflow-auto rounded bg-zinc-100 p-2 font-mono text-xs whitespace-pre-wrap dark:bg-zinc-800">{{ confirm.sql }}</pre>
                 <div class="mt-4 flex justify-end gap-2">
-                    <button type="button" class="dbx-btn" @click="confirm = null">Cancel</button>
+                    <button type="button" class="dbx-btn" @click="cancelConfirm">Cancel</button>
                     <button type="button" class="dbx-btn" :class="confirm.classification === 'destructive' ? 'dbx-btn-danger' : 'dbx-btn-primary'" @click="confirmed">Run it</button>
                 </div>
             </template>

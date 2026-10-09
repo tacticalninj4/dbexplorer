@@ -1,5 +1,5 @@
 import { api, segment } from '../api';
-import type { Column, DbObject, Extension, Schema } from '../types';
+import type { Column, Constraint, DbObject, Extension, Index, Schema } from '../types';
 
 /**
  * Catalog lookups per connection label, cached for the page's lifetime so the
@@ -11,6 +11,8 @@ interface Catalog {
     extensions?: Promise<Extension[]>;
     objects: Map<string, Promise<DbObject[]>>;
     columns: Map<string, Promise<Column[]>>;
+    constraints: Map<string, Promise<Constraint[]>>;
+    indexes: Map<string, Promise<Index[]>>;
 }
 
 const catalogs = new Map<string, Catalog>();
@@ -19,7 +21,7 @@ function catalog(label: string): Catalog {
     let entry = catalogs.get(label);
 
     if (!entry) {
-        entry = { objects: new Map(), columns: new Map() };
+        entry = { objects: new Map(), columns: new Map(), constraints: new Map(), indexes: new Map() };
         catalogs.set(label, entry);
     }
 
@@ -40,6 +42,30 @@ function cached<T>(map: Map<string, Promise<T>>, key: string, load: () => Promis
 
 async function data<T>(path: string): Promise<T> {
     return (await api<{ data: T }>(path)).data;
+}
+
+/** Drop the cached objects, columns, constraints and indexes of `label` (all, or one schema's objects). */
+export function invalidate(label: string, schema?: string): void {
+    const entry = catalogs.get(label);
+
+    if (!entry) {
+        return;
+    }
+
+    if (schema === undefined) {
+        entry.objects.clear();
+        entry.columns.clear();
+        entry.constraints.clear();
+        entry.indexes.clear();
+        entry.schemas = undefined;
+        return;
+    }
+
+    for (const key of [...entry.objects.keys()]) {
+        if (key === schema || key.startsWith(`${JSON.stringify([schema])}`)) {
+            entry.objects.delete(key);
+        }
+    }
 }
 
 export function schemas(label: string): Promise<Schema[]> {
@@ -72,4 +98,23 @@ export function columns(label: string, schema: string, name: string): Promise<Co
     return cached(catalog(label).columns, JSON.stringify([schema, name]), () =>
         data<Column[]>(`${segment(label)}/objects/${segment(schema)}/${segment(name)}/columns`),
     );
+}
+
+export function constraints(label: string, schema: string, name: string): Promise<Constraint[]> {
+    return cached(catalog(label).constraints, JSON.stringify([schema, name]), () =>
+        data<Constraint[]>(`${segment(label)}/objects/${segment(schema)}/${segment(name)}/constraints`),
+    );
+}
+
+export function indexes(label: string, schema: string, name: string): Promise<Index[]> {
+    return cached(catalog(label).indexes, JSON.stringify([schema, name]), () =>
+        data<Index[]>(`${segment(label)}/objects/${segment(schema)}/${segment(name)}/indexes`),
+    );
+}
+
+/** The table's primary key columns, or null when it has none. Views and matviews have none. */
+export async function primaryKey(label: string, schema: string, name: string): Promise<string[] | null> {
+    const found = (await constraints(label, schema, name)).find((constraint) => constraint.type === 'primary_key');
+
+    return found ? found.columns : null;
 }

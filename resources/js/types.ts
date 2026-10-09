@@ -135,7 +135,24 @@ export interface RowsPage {
     count: { value: number | null; exact: boolean };
 }
 
-export type Classification = 'read' | 'dml' | 'ddl' | 'destructive' | 'unknown';
+/** Classifier::classify(). */
+export const CLASSIFICATIONS = ['read', 'dml', 'ddl', 'destructive', 'unknown'] as const;
+
+export type Classification = (typeof CLASSIFICATIONS)[number];
+
+/** The 409 body of the query API when it wants `confirm: true`: `{error: {message, code, classification}}`. */
+export interface ConfirmationRequired {
+    message: string;
+    code: 'confirmation_required';
+    classification: Classification;
+}
+
+/** The 409 body of a row write that hit a changed row: `{error: {message}, current}`. */
+export interface RowConflictBody {
+    message: string;
+    /** The row as it is in the database now, or null when it was deleted. */
+    current: Record<string, Cell> | null;
+}
 
 export interface QueryResponse {
     columns: ResultColumn[];
@@ -185,3 +202,28 @@ export interface Filter {
 export const FILTER_OPERATORS = ['=', '!=', '<', '<=', '>', '>=', 'like', 'ilike', 'in', 'is_null', 'not_null'] as const;
 
 export type FilterOperator = (typeof FILTER_OPERATORS)[number];
+
+/** One statement built by DdlBuilder from a structured operation. */
+export interface DdlStatement {
+    sql: string;
+    classification: 'ddl' | 'destructive';
+    /** False for CREATE/DROP INDEX CONCURRENTLY, which cannot run in a transaction. */
+    transactional: boolean;
+    /** True when the statement embeds raw SQL expressions the builder does not parse. */
+    raw_expressions: boolean;
+}
+
+/** POST ddl/preview: the SQL for the operation, nothing runs. */
+export interface DdlPreview {
+    statements: DdlStatement[];
+    /** A best-effort Laravel `Schema::` snippet, or null when Blueprint can't express it. */
+    migration: string | null;
+}
+
+/** POST ddl/execute: the statements that ran. */
+export interface DdlResult {
+    statements: DdlStatement[];
+    duration_ms: number;
+    notices: string[];
+    notices_supported: boolean;
+}

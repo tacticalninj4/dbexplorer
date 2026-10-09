@@ -22,13 +22,18 @@ const props = withDefaults(
         sortable?: boolean;
         filterable?: boolean;
         filters?: Filter[];
+        /** Rows can be picked, e.g. for editing. Emits `rowClick` with the index. */
+        selectable?: boolean;
+        /** The selected row index, for the highlight (-1 for none). */
+        selected?: number;
     }>(),
-    { loading: false, rowOffset: 0, sort: null, sortable: false, filterable: false, filters: () => [] },
+    { loading: false, rowOffset: 0, sort: null, sortable: false, filterable: false, filters: () => [], selectable: false, selected: -1 },
 );
 
 const emit = defineEmits<{
     sort: [column: string];
     filter: [filters: Filter[]];
+    rowClick: [index: number];
 }>();
 
 const OPERATOR_LABELS: Record<FilterOperator, string> = {
@@ -205,7 +210,16 @@ function needsValue(op: FilterOperator): boolean {
                     </tr>
                 </thead>
                 <tbody>
-                    <tr v-for="(row, r) in rows" :key="rowOffset + r" class="odd:bg-white even:bg-zinc-50/60 hover:bg-sky-50 dark:odd:bg-zinc-950 dark:even:bg-zinc-900/40 dark:hover:bg-sky-950/40">
+                    <tr
+                        v-for="(row, r) in rows"
+                        :key="rowOffset + r"
+                        class="odd:bg-white even:bg-zinc-50/60 hover:bg-sky-50 dark:odd:bg-zinc-950 dark:even:bg-zinc-900/40 dark:hover:bg-sky-950/40"
+                        :class="selectable ? 'cursor-pointer' : ''"
+                        :aria-selected="selectable ? r === selected : undefined"
+                        :tabindex="selectable ? 0 : undefined"
+                        @click="selectable && emit('rowClick', r)"
+                        @keydown.enter="selectable && emit('rowClick', r)"
+                    >
                         <td class="border-b border-zinc-100 px-2 py-1 text-right align-top text-xs text-zinc-400 tabular-nums dark:border-zinc-800/60">{{ rowOffset + r + 1 }}</td>
                         <td
                             v-for="{ column, index } in visible"
