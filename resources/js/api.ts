@@ -1,5 +1,6 @@
 import { basePath, csrfToken } from './config';
-import type { QueryError } from './types';
+import { CLASSIFICATIONS } from './types';
+import type { ConfirmationRequired, QueryError } from './types';
 
 export class ApiError extends Error {
     readonly status: number;
@@ -24,6 +25,27 @@ export class ApiError extends Error {
             message: error.message,
             sqlstate: typeof error.sqlstate === 'string' ? error.sqlstate : null,
             position: typeof error.position === 'number' ? error.position : null,
+        };
+    }
+
+    /**
+     * The 409 body of the query API when it wants the statement confirmed
+     * (`code: 'confirmation_required'`), if this is one: the classification to
+     * show, so the SPA never guesses it itself (PRD S11).
+     */
+    get confirmationRequired(): ConfirmationRequired | null {
+        const error = isObject(this.body) ? this.body.error : null;
+
+        if (!isObject(error) || error.code !== 'confirmation_required' || typeof error.message !== 'string') {
+            return null;
+        }
+
+        const classification = CLASSIFICATIONS.find((value) => value === error.classification);
+
+        return {
+            message: error.message,
+            code: 'confirmation_required',
+            classification: classification ?? 'unknown',
         };
     }
 }

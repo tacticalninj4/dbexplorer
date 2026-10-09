@@ -1,24 +1,16 @@
-import type { Classification } from '../types';
-
 /**
  * A small PostgreSQL tokenizer for the editor: it finds the statement under
- * the cursor and gives a first guess at its classification before it runs.
+ * the cursor (or the selection) to run.
  *
- * UX only, like the server's Classifier (PRD S11). The server classifies again
- * and the database login is the enforcement; this only decides whether to ask
- * "are you sure?" first.
+ * It deliberately does not classify statements: the server classifies (PRD
+ * S11) and drives every confirmation, so the SPA holds no SQL-classifier copy
+ * to drift out of sync. The database login is the enforcement.
  */
-
-interface Word {
-    text: string;
-    depth: number;
-}
 
 export interface Statement {
     /** Offsets into the source, without surrounding whitespace. */
     from: number;
     to: number;
-    words: Word[];
 }
 
 /** Split on top-level semicolons, skipping comments, strings, quoted names and dollar quotes. */
@@ -28,11 +20,9 @@ export function statements(sql: string): Statement[] {
     let depth = 0;
     let i = 0;
 
-    const touch = (from: number, to: number): Statement => {
-        current ??= { from, to, words: [] };
+    const touch = (from: number, to: number): void => {
+        current ??= { from, to };
         current.to = to;
-
-        return current;
     };
 
     while (i < sql.length) {
@@ -103,7 +93,7 @@ export function statements(sql: string): Statement[] {
             while (i < sql.length && /[A-Za-z0-9_$]/.test(sql[i] as string)) {
                 i++;
             }
-            touch(start, i).words.push({ text: sql.slice(start, i).toUpperCase(), depth });
+            touch(start, i);
         } else {
             if (ch === '(') {
                 depth++;
@@ -137,77 +127,6 @@ export function statementAt(sql: string, from: number, to: number): { text: stri
         ?? all[0];
 
     return found ? { text: sql.slice(found.from, found.to), offset: found.from } : { text: '', offset: 0 };
-}
-
-const DDL = ['CREATE', 'COMMENT', 'GRANT', 'REVOKE', 'REINDEX', 'CLUSTER', 'REFRESH', 'VACUUM', 'ANALYZE', 'ANALYSE', 'SECURITY', 'IMPORT', 'REASSIGN', 'DO'];
-
-const SEVERITY: Classification[] = ['read', 'dml', 'ddl', 'unknown', 'destructive'];
-
-function worst(a: Classification, b: Classification): Classification {
-    return SEVERITY.indexOf(a) >= SEVERITY.indexOf(b) ? a : b;
-}
-
-function classifyWords(words: Word[]): Classification {
-    const first = words[0]?.text;
-    const base = words[0]?.depth ?? 0;
-    const top = (word: string) => words.some((w) => w.text === word && w.depth === base);
-    const any = (...list: string[]) => words.some((w) => list.includes(w.text));
-
-    switch (first) {
-        case undefined:
-            return 'unknown';
-        case 'SELECT':
-            if (top('INTO')) {
-                return 'ddl';
-            }
-            return words.some((w, i) => w.text === 'FOR' && ['UPDATE', 'SHARE', 'NO', 'KEY'].includes(words[i + 1]?.text ?? '')) ? 'dml' : 'read';
-        case 'VALUES':
-        case 'TABLE':
-        case 'SHOW':
-            return 'read';
-        case 'EXPLAIN':
-            return words.slice(1, 4).some((w) => w.text === 'ANALYZE' || w.text === 'ANALYSE')
-                ? classifyWords(words.slice(1).filter((w) => !['ANALYZE', 'ANALYSE', 'VERBOSE', 'BUFFERS'].includes(w.text)))
-                : 'read';
-        case 'WITH': {
-            // The most severe of the CTE bodies and the main statement.
-            let result: Classification = any('INSERT', 'MERGE') ? 'dml' : 'read';
-            words.forEach((w, i) => {
-                if (w.text === 'UPDATE' || w.text === 'DELETE') {
-                    const rest = words.slice(i + 1);
-                    const hasWhere = rest.some((r) => r.text === 'WHERE' && r.depth === w.depth);
-                    result = worst(result, hasWhere ? 'dml' : 'destructive');
-                }
-            });
-            return result;
-        }
-        case 'INSERT':
-        case 'MERGE':
-        case 'CALL':
-            return 'dml';
-        case 'UPDATE':
-        case 'DELETE':
-            return top('WHERE') ? 'dml' : 'destructive';
-        case 'DROP':
-        case 'TRUNCATE':
-            return 'destructive';
-        case 'ALTER':
-            return any('DROP') ? 'destructive' : 'ddl';
-        case 'COPY':
-            return top('STDOUT') ? 'read' : top('STDIN') ? 'dml' : 'ddl';
-        case 'SET':
-        case 'RESET':
-            return any('ROLE', 'AUTHORIZATION') ? 'ddl' : 'unknown';
-        default:
-            return DDL.includes(first) ? 'ddl' : 'unknown';
-    }
-}
-
-/** The most severe classification among the statements in `sql`. */
-export function classify(sql: string): Classification {
-    const all = statements(sql);
-
-    return all.length === 0 ? 'unknown' : all.map((s) => classifyWords(s.words)).reduce(worst);
 }
 
 /**
