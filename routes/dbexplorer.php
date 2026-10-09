@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Illuminate\Routing\Middleware\ThrottleRequests;
 use Illuminate\Support\Facades\Route;
 use TacticalNinj4\DbExplorer\Http\Controllers\AssetController;
+use TacticalNinj4\DbExplorer\Http\Controllers\AuditController;
 use TacticalNinj4\DbExplorer\Http\Controllers\ConfirmPasswordController;
 use TacticalNinj4\DbExplorer\Http\Controllers\DdlController;
 use TacticalNinj4\DbExplorer\Http\Controllers\ExportController;
@@ -17,6 +18,7 @@ use TacticalNinj4\DbExplorer\Http\Controllers\RowWriteController;
 use TacticalNinj4\DbExplorer\Http\Controllers\RunsController;
 use TacticalNinj4\DbExplorer\Http\Controllers\SavedQueryController;
 use TacticalNinj4\DbExplorer\Http\Controllers\ScriptController;
+use TacticalNinj4\DbExplorer\Http\Controllers\SessionsController;
 use TacticalNinj4\DbExplorer\Http\Controllers\ShellController;
 
 // Loaded by DbExplorerServiceProvider inside the configured domain, prefix and
@@ -70,6 +72,10 @@ Route::prefix('api/{label}')->middleware('throttle:dbexplorer')->group(function 
     Route::patch('queries/{query}', [SavedQueryController::class, 'update'])->name('queries.update');
     Route::delete('queries/{query}', [SavedQueryController::class, 'destroy'])->name('queries.destroy');
     Route::post('queries/{query}/run', [SavedQueryController::class, 'run'])->name('queries.run');
+    Route::get('sessions', [SessionsController::class, 'index'])->name('sessions');
+    Route::post('sessions/{pid}/cancel', [SessionsController::class, 'cancel'])->name('sessions.cancel');
+    Route::post('sessions/{pid}/terminate', [SessionsController::class, 'terminate'])->name('sessions.terminate');
+    Route::get('audit', AuditController::class)->name('audit');
 });
 
 // A run's result file, behind a signed URL handed out by runs/{run}/download
