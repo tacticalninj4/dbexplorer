@@ -26,7 +26,8 @@ it('lists every allowlisted label as viewer when no role callback is registered'
                 ['label' => 'staging', 'role' => 'viewer'],
                 ['label' => 'reporting', 'role' => 'viewer'],
             ],
-            'warnings' => [],
+            // Testbench's queue is sync (RunsTest covers the queue warnings).
+            'warnings' => ['The queue driver is "sync": background work runs inside the request and blocks it until done.'],
         ]);
 });
 

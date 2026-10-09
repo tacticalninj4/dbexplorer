@@ -11,6 +11,7 @@ use TacticalNinj4\DbExplorer\Http\Controllers\ObjectsController;
 use TacticalNinj4\DbExplorer\Http\Controllers\QueryController;
 use TacticalNinj4\DbExplorer\Http\Controllers\RowsController;
 use TacticalNinj4\DbExplorer\Http\Controllers\RowWriteController;
+use TacticalNinj4\DbExplorer\Http\Controllers\RunsController;
 use TacticalNinj4\DbExplorer\Http\Controllers\ShellController;
 
 // Loaded by DbExplorerServiceProvider inside the configured domain, prefix and
@@ -48,6 +49,9 @@ Route::prefix('api/{label}')->middleware('throttle:dbexplorer')->group(function 
     Route::delete('rows/{schema}/{name}', [RowWriteController::class, 'delete'])->name('rows.delete');
     Route::post('query', [QueryController::class, 'run'])->name('query');
     Route::get('history', [QueryController::class, 'history'])->name('history');
+    Route::get('runs', [RunsController::class, 'index'])->name('runs');
+    Route::get('runs/{run}', [RunsController::class, 'show'])->name('runs.show');
+    Route::post('runs/{run}/cancel', [RunsController::class, 'cancel'])->name('runs.cancel');
 });
 
 Route::get('assets/{path}', AssetController::class)->where('path', '.+')->name('asset');
