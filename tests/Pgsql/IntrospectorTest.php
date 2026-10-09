@@ -254,6 +254,10 @@ it('describes only the kinds of relation each method supports', function (string
 ]);
 
 it('reports table stats', function () {
+    // The fixture loads once per database, but Postgres drops pg_stat_* after an
+    // unclean shutdown, so last_analyze can't rely on the fixture's own ANALYZE.
+    DB::connection('pgsql_super')->statement('ANALYZE fixture.big');
+
     $big = introspector()->stats('fixture', 'big');
     $measurements = introspector()->stats('fixture', 'measurements');
 
