@@ -409,17 +409,23 @@ final class QueryRunner
      * DECLARE reach the cursor, and only queries the classifier calls read get
      * here: the caller checks, and this method insists again.
      *
+     * `$onBegin`, when given, runs inside the transaction before the query
+     * starts, with the same `$statement` atomic() hands its callback: a
+     * background job stores its `pg_backend_pid()` there, so a cancel can
+     * reach the query mid-statement (TracksRun::trackBackend()).
+     *
      * Returns the column list and the total row count. Nothing is audited
      * here: the job's run records the export (S17).
      *
      * @param  array<int|string, scalar|null>  $bindings
      * @param  Closure(list<array{name: string, type: string, masked: bool}>, list<list<mixed>>): void  $onRows
+     * @param  (Closure(Closure(string, array<int, scalar|null>): array{columns: list<string>, rows: list<list<mixed>>, affected: int}): void)|null  $onBegin
      * @return array{columns: list<array{name: string, type: string, masked: bool}>, rows: int}
      *
      * @throws QueryFailed
      * @throws InvalidArgumentException for an unknown role or a query that isn't a read
      */
-    public function stream(string $connection, string $sql, array $bindings, string $role, Closure $onRows): array
+    public function stream(string $connection, string $sql, array $bindings, string $role, Closure $onRows, ?Closure $onBegin = null): array
     {
         if (! Role::isValid($role)) {
             throw new InvalidArgumentException("Unknown role [{$role}].");
@@ -444,6 +450,11 @@ final class QueryRunner
         try {
             $pdo->exec($role === Role::VIEWER ? 'BEGIN READ ONLY' : 'BEGIN');
             $this->prepare($pdo, "SELECT set_config('statement_timeout', ?, true)")->execute([(string) ($timeout * 1000)]);
+
+            if ($onBegin !== null) {
+                $statementSql = '';
+                $onBegin($this->statement($pdo, self::STREAM_CHUNK, $statementSql));
+            }
 
             $this->rejectHiddenRelations($pdo, $sql, $bindings);
 

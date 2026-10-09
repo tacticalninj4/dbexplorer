@@ -6,6 +6,7 @@ namespace TacticalNinj4\DbExplorer\Jobs\Concerns;
 
 use Closure;
 use Illuminate\Queue\MaxAttemptsExceededException;
+use Illuminate\Support\Facades\DB;
 use TacticalNinj4\DbExplorer\DbExplorer;
 use TacticalNinj4\DbExplorer\Drivers\Postgres\QueryRunner;
 use TacticalNinj4\DbExplorer\Exceptions\ConnectionNotAllowedException;
@@ -26,7 +27,8 @@ use Throwable;
  *    and their role on the run's label resolved again. A user who is gone, or
  *    whose role is now lower than the run's, fails the run ("permission
  *    changed"); otherwise the run's role picks the Laravel connection.
- * 3. The run is marked running and process() does the work. Jobs call
+ * 3. The run is marked running, the connection's backend pid stored (so a
+ *    cancel can reach it) and process() does the work. Jobs call
  *    trackBackend() first thing inside their transaction, then shouldStop()
  *    between chunks or statements, throwing RunCancelled when it says so.
  * 4. Returning succeeds the run. RunCancelled, or a query cancelled (57014)
@@ -87,6 +89,7 @@ trait TracksRun
         }
 
         try {
+            $this->recordBackend($connection);
             $this->process($run, $connection);
         } catch (RunCancelled) {
             $run->finish(RunStatus::CANCELLED);
@@ -159,6 +162,33 @@ trait TracksRun
         if ($this->shouldStop()) {
             throw new RunCancelled;
         }
+    }
+
+    /**
+     * Store the backend pid of the run's connection before process() starts,
+     * so a cancel reaches a job that runs its statement through the plain
+     * QueryRunner::run() (a scheduled query) on the same session. Jobs with
+     * their own transaction call trackBackend() too, which also raises the
+     * statement timeout. A cancel that arrived before is left to the job's
+     * own checks, so it can record its outcome (e.g. a script's skipped
+     * statements) as usual.
+     *
+     * @throws QueryFailed when the connection can't be opened
+     */
+    private function recordBackend(string $connection): void
+    {
+        try {
+            $row = DB::connection($connection)->selectOne('SELECT pg_backend_pid() AS pid');
+        } catch (Throwable $e) {
+            // The driver's message names the host and login: app log only (S7).
+            report($e);
+
+            throw QueryFailed::connectionFailed();
+        }
+
+        $pid = is_object($row) ? ($row->pid ?? null) : null;
+
+        Run::query()->whereKey($this->runId)->update(['pid' => is_numeric($pid) ? (int) $pid : null]);
     }
 
     /**

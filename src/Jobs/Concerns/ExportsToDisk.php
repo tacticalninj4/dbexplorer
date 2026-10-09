@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace TacticalNinj4\DbExplorer\Jobs\Concerns;
 
+use Closure;
 use Illuminate\Support\Facades\Storage;
 use RuntimeException;
 use TacticalNinj4\DbExplorer\Drivers\Postgres\QueryRunner;
@@ -24,8 +25,10 @@ use TacticalNinj4\DbExplorer\Models\Run;
  * php://temp stream, then stored as `exports/run-{id}.{format}` on the
  * configured `storage.disk`. The run's result_disk/result_path are set only
  * once the file is stored, so a cancelled or failed run has no result to
- * download. Cancellation is checked between chunks: the temp stream is
- * discarded and nothing is stored.
+ * download. The session's pid is stored before the query starts, so a cancel
+ * stops it mid-statement (pg_cancel_backend); between chunks the cancel flag
+ * is checked too. Either way the temp stream is discarded and nothing is
+ * stored. The statement timeout is limits.background.timeout.
  */
 trait ExportsToDisk
 {
@@ -45,6 +48,9 @@ trait ExportsToDisk
             if ($this->shouldStop()) {
                 throw new RunCancelled;
             }
+        }, function (Closure $statement): void {
+            // Before the query starts: a cancel can now reach it mid-statement.
+            $this->trackBackend($statement);
         });
 
         $disk = config('dbexplorer.storage.disk');

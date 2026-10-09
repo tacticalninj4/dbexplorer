@@ -5,8 +5,12 @@ declare(strict_types=1);
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Symfony\Component\Process\Process;
+use TacticalNinj4\DbExplorer\Export\ExportWriter;
 use TacticalNinj4\DbExplorer\Facades\DbExplorer;
+use TacticalNinj4\DbExplorer\Jobs\Export;
+use TacticalNinj4\DbExplorer\Jobs\RunQuery;
 use TacticalNinj4\DbExplorer\Models\AuditEntry;
 use TacticalNinj4\DbExplorer\Models\Run;
 use TacticalNinj4\DbExplorer\Models\RunStatus;
@@ -16,8 +20,11 @@ beforeEach(function () {
     app()['env'] = 'local';
 });
 
-it('cancels a running query mid-statement from the API, with a real queue worker', function () {
-    // The database queue this process dispatches to and the worker reads from.
+/**
+ * The database queue this process dispatches to and a real worker reads from.
+ */
+function createQueueTables(): void
+{
     Schema::create('jobs', function (Blueprint $table): void {
         $table->id();
         $table->string('queue')->index();
@@ -37,13 +44,14 @@ it('cancels a running query mid-statement from the API, with a real queue worker
         $table->timestamp('failed_at')->useCurrent();
     });
 
-    createUsers(1);
     config(['queue.default' => 'database']);
+}
 
-    $run = createRun(['meta' => [Run::USER_PROVIDER => 'users', 'statements' => ['SELECT pg_sleep(30)']]]);
-
-    RunStatements::dispatch($run->id);
-
+/**
+ * Start a child `queue:work --once` that picks up the one queued job.
+ */
+function startWorker(): Process
+{
     $worker = new Process(
         [PHP_BINARY, __DIR__.'/scripts/work-one-job.php'],
         null,
@@ -53,22 +61,34 @@ it('cancels a running query mid-statement from the API, with a real queue worker
     );
     $worker->start();
 
+    return $worker;
+}
+
+it('cancels a running query mid-statement from the API, with a real queue worker', function () {
+    createQueueTables();
+    createUsers(1);
+
+    $run = createRun(['meta' => [Run::USER_PROVIDER => 'users', 'statements' => ['SELECT pg_sleep(30)']]]);
+
+    RunStatements::dispatch($run->id);
+    $worker = startWorker();
+
+    // Wait until the stored pid's backend is really inside the sleep, not
+    // between statements.
     $deadline = microtime(true) + 30;
+    $sleeping = [];
 
     do {
         usleep(100000);
         $fresh = Run::query()->whereKey($run->id)->first(['status', 'pid']);
-    } while (($fresh->status !== RunStatus::RUNNING || $fresh->pid === null) && microtime(true) < $deadline);
+        $sleeping = $fresh->pid === null ? [] : DB::connection('pgsql_super')->select('SELECT query FROM pg_stat_activity WHERE pid = ? AND state = ? AND wait_event = ?', [(int) $fresh->pid, 'active', 'PgSleep']);
+    } while ($sleeping === [] && microtime(true) < $deadline);
 
-    expect($fresh->status)->toBe(RunStatus::RUNNING, 'The run never started: '.$worker->getErrorOutput().$worker->getOutput());
+    expect($fresh->status)->toBe(RunStatus::RUNNING, 'The run never started: '.$worker->getErrorOutput().$worker->getOutput())
+        ->and($sleeping)->not->toBeEmpty()
+        ->and($sleeping[0]->query)->toContain('pg_sleep(30)');
 
     $pid = (int) $fresh->pid;
-
-    // The worker is really inside the sleep, not between statements.
-    $sleeping = DB::connection('pgsql_super')->select('SELECT query FROM pg_stat_activity WHERE pid = ? AND state = ?', [$pid, 'active']);
-
-    expect($sleeping)->not->toBeEmpty()
-        ->and($sleeping[0]->query)->toContain('pg_sleep(30)');
 
     DbExplorer::roleUsing(fn (): string => 'viewer');
 
@@ -100,3 +120,70 @@ it('cancels a running query mid-statement from the API, with a real queue worker
 
     expect($backends)->toBeEmpty();
 });
+
+it('cancels a background query or export mid-statement: the job stores its pid before the query starts', function (string $job, string $type, array $meta) {
+    createQueueTables();
+    createUsers(1);
+    config(['dbexplorer.storage.disk' => 'local']);
+
+    $run = createRun(['type' => $type, 'meta' => array_merge([Run::USER_PROVIDER => 'users', 'sql' => 'SELECT pg_sleep(60) AS slept'], $meta)]);
+
+    $job::dispatch($run->id);
+    $worker = startWorker();
+
+    // Wait for the pid, then for the backend to be inside the sleep.
+    $deadline = microtime(true) + 30;
+    $active = [];
+
+    do {
+        usleep(100000);
+        $fresh = Run::query()->whereKey($run->id)->first(['status', 'pid']);
+        $active = $fresh->pid === null ? [] : DB::connection('pgsql_super')->select('SELECT pid FROM pg_stat_activity WHERE pid = ? AND state = ? AND wait_event = ?', [(int) $fresh->pid, 'active', 'PgSleep']);
+    } while ($active === [] && microtime(true) < $deadline);
+
+    expect($active)->not->toBeEmpty('The query never started sleeping with its pid stored: '.$worker->getErrorOutput().$worker->getOutput());
+
+    $pid = (int) $fresh->pid;
+
+    DbExplorer::roleUsing(fn (): string => 'viewer');
+
+    $cancelledAt = microtime(true);
+
+    $this->actingAs(makeUser(1))
+        ->withSession(['_token' => 'csrf-test-token'])
+        ->withHeaders(['X-CSRF-TOKEN' => 'csrf-test-token'])
+        ->postJson("/dbexplorer/api/main/runs/{$run->id}/cancel")
+        ->assertStatus(202);
+
+    // The statement is cancelled, not waited out: well within its 60 seconds.
+    do {
+        usleep(100000);
+        $status = Run::query()->whereKey($run->id)->value('status');
+    } while ($status !== RunStatus::CANCELLED && microtime(true) < $cancelledAt + 20);
+
+    expect($status)->toBe(RunStatus::CANCELLED, 'Not cancelled within 20 s: '.$worker->getErrorOutput().$worker->getOutput());
+
+    $worker->wait();
+
+    expect($worker->getExitCode())->toBe(0, $worker->getErrorOutput().$worker->getOutput());
+
+    $run->refresh();
+
+    expect($run->pid)->toBeNull()
+        ->and($run->error)->toBeNull()
+        ->and($run->result_path)->toBeNull()
+        ->and(Storage::disk('local')->allFiles('exports'))->toBe([]);
+
+    // The cancelled backend is gone from the server with the worker.
+    $deadline = microtime(true) + 5;
+
+    do {
+        usleep(100000);
+        $backends = DB::connection('pgsql_super')->select('SELECT pid FROM pg_stat_activity WHERE pid = ?', [$pid]);
+    } while ($backends !== [] && microtime(true) < $deadline);
+
+    expect($backends)->toBeEmpty();
+})->with([
+    'background query' => [RunQuery::class, RunQuery::TYPE, []],
+    'export' => [Export::class, Export::TYPE, ['format' => ExportWriter::JSONL]],
+]);
