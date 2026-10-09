@@ -11,7 +11,8 @@ use Symfony\Component\Process\Process;
  * pg_dump, the safe way (PRD §7.12, S20): the command is an argument array
  * that never goes through a shell, and the password reaches it only through
  * the PGPASSWORD environment variable — never in the arguments, where a ps
- * or an error log would show it.
+ * or an error log would show it. The connection's sslmode, sslrootcert,
+ * sslcert and sslkey reach it the same way (PGSSLMODE, …).
  */
 final class BackupTool
 {
@@ -65,15 +66,34 @@ final class BackupTool
         return $arguments;
     }
 
+    /** libpq's environment variable for each SSL option of a Laravel pgsql connection. */
+    public const SSL_ENV = [
+        'sslmode' => 'PGSSLMODE',
+        'sslrootcert' => 'PGSSLROOTCERT',
+        'sslcert' => 'PGSSLCERT',
+        'sslkey' => 'PGSSLKEY',
+    ];
+
     /**
-     * The environment the dump runs with: the password and nothing else it
-     * doesn't need.
+     * The environment the dump runs with: the password and the connection's
+     * SSL settings (so pg_dump connects as securely as the app does), and
+     * nothing else it doesn't need.
      *
      * @return array<string, string>
      */
     public function env(): array
     {
-        return ['PGPASSWORD' => (string) $this->connection->getConfig('password')];
+        $env = ['PGPASSWORD' => (string) $this->connection->getConfig('password')];
+
+        foreach (self::SSL_ENV as $option => $variable) {
+            $value = $this->connection->getConfig($option);
+
+            if (is_string($value) && $value !== '') {
+                $env[$variable] = $value;
+            }
+        }
+
+        return $env;
     }
 
     /**

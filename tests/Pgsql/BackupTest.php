@@ -57,13 +57,37 @@ it('S20 builds the dump command as an argument array, with the password only in 
 
     expect($line)->not->toContain('dbx-test-password')
         ->not->toContain('--password')
-        ->and($env)->toBe(['PGPASSWORD' => 'dbx-test-password']);
+        ->and($env)->toBe(['PGPASSWORD' => 'dbx-test-password', 'PGSSLMODE' => 'prefer']);
 
     // Host, port, user and database all reach pg_dump as separate arguments.
     $config = DB::connection('pgsql_admin')->getConfig();
 
     expect($command)->toContain((string) $config['host'])
         ->and($command)->toContain((string) $config['database']);
+});
+
+it('S20 passes the connection\'s SSL settings to pg_dump through the environment, never the arguments', function () {
+    config(['database.connections.pgsql_ssl' => array_merge(DB::connection('pgsql_admin')->getConfig(), [
+        'sslmode' => 'verify-full',
+        'sslrootcert' => '/etc/ssl/root.crt',
+        'sslcert' => '/etc/ssl/client.crt',
+        'sslkey' => '/etc/ssl/client.key',
+    ])]);
+
+    $tool = new BackupTool(DB::connection('pgsql_ssl'), '/usr/bin/pg_dump');
+
+    expect($tool->env())->toBe([
+        'PGPASSWORD' => 'dbx-test-password',
+        'PGSSLMODE' => 'verify-full',
+        'PGSSLROOTCERT' => '/etc/ssl/root.crt',
+        'PGSSLCERT' => '/etc/ssl/client.crt',
+        'PGSSLKEY' => '/etc/ssl/client.key',
+    ])->and(implode(' ', $tool->command()))->not->toContain('ssl')->not->toContain('dbx-test-password');
+
+    // Unset or empty options are left to libpq's defaults.
+    config(['database.connections.pgsql_nossl' => array_merge(DB::connection('pgsql_admin')->getConfig(), ['sslmode' => '', 'sslcert' => null])]);
+
+    expect((new BackupTool(DB::connection('pgsql_nossl'), '/usr/bin/pg_dump'))->env())->toBe(['PGPASSWORD' => 'dbx-test-password']);
 });
 
 it('preflights the pg_dump version against the server', function () {
