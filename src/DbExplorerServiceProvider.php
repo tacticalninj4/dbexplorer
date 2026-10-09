@@ -15,6 +15,7 @@ use TacticalNinj4\DbExplorer\Audit\AuditLog;
 use TacticalNinj4\DbExplorer\Console\AuditVerifyCommand;
 use TacticalNinj4\DbExplorer\Console\InstallCommand;
 use TacticalNinj4\DbExplorer\Console\PruneCommand;
+use TacticalNinj4\DbExplorer\Console\ScheduleTickCommand;
 use TacticalNinj4\DbExplorer\Http\Middleware\Authorize;
 use TacticalNinj4\DbExplorer\Http\Middleware\ContentSecurityPolicy;
 use TacticalNinj4\DbExplorer\Http\Middleware\IpAllowlist;
@@ -55,9 +56,11 @@ class DbExplorerServiceProvider extends ServiceProvider
         $this->warnAboutPublicDisk();
 
         // The host's `schedule:run` prunes runs, history, files and audit
-        // entries daily; nothing here needs its own cron entry.
+        // entries daily, and dispatches the due scheduled queries every
+        // minute; nothing here needs its own cron entry (PRD §7.9).
         $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
             $schedule->command('dbx:prune')->daily();
+            $schedule->command('dbx:schedule:tick')->everyMinute();
         });
 
         if (! $this->app->runningInConsole()) {
@@ -68,6 +71,7 @@ class DbExplorerServiceProvider extends ServiceProvider
             AuditVerifyCommand::class,
             InstallCommand::class,
             PruneCommand::class,
+            ScheduleTickCommand::class,
         ]);
 
         $this->publishes([
