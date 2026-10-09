@@ -25,7 +25,7 @@ use TacticalNinj4\DbExplorer\Security\Masker;
  *
  * The page and the optional exact count run through the QueryRunner: a
  * read-only transaction for viewers, the role's timeout and row cap,
- * masking and an audit entry each (S9, S10, S14, S17).
+ * masking and an audit entry each (S9, S10, S14, S17), but no query history row.
  *
  * Response: `{data: {columns: [{name, type, masked}], rows, pagination,
  * next_cursor, next_offset, truncated, count: {value, exact}}}`. Rows are
@@ -65,7 +65,8 @@ class RowsController
         $query = new RowsQuery($schema, $name, $source['columns'], $key, $source['ctid'], $masked);
         [$sql, $bindings, $meta] = $query->build($request->query(), (int) config("dbexplorer.limits.{$role}.rows", 1000));
 
-        $result = $this->runner->run($connection, $sql, $bindings, $role);
+        // Grid fetches are audited but stay out of the user's query history.
+        $result = $this->runner->run($connection, $sql, $bindings, $role, ['history' => false]);
 
         // The runner drops the row over its cap; RowsQuery asked for one over the page.
         $more = $result->truncated || count($result->rows) > $meta['limit'];
@@ -86,7 +87,7 @@ class RowsController
         $count = ['value' => $source['estimated_rows'], 'exact' => false];
 
         if ($meta['count'] !== null) {
-            $counted = $this->runner->run($connection, $meta['count']['sql'], $meta['count']['bindings'], $role);
+            $counted = $this->runner->run($connection, $meta['count']['sql'], $meta['count']['bindings'], $role, ['history' => false]);
             $count = ['value' => (int) ($counted->rows[0][0] ?? 0), 'exact' => true];
         }
 

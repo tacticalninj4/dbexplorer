@@ -105,9 +105,11 @@ final class QueryRunner
      * - `label`, `user_id`: for the audit entry and history row. Inside a routed
      *   request they default to the request's label and user; the history row
      *   falls back to the connection name as label.
+     * - `history`: false skips the query history row, e.g. for data grid
+     *   fetches the user didn't type. The run is still audited.
      *
      * @param  array<int|string, scalar|null>  $bindings  Positional values, bound in order, or named (`:name` keys) values
-     * @param  array{explain?: string|null, unmask?: bool, label?: string|null, user_id?: string|int|null}  $options
+     * @param  array{explain?: string|null, unmask?: bool, label?: string|null, user_id?: string|int|null, history?: bool}  $options
      *
      * @throws QueryFailed when the database rejects or fails the statement
      * @throws InvalidArgumentException for an unknown role, explain mode or binding type
@@ -827,7 +829,7 @@ final class QueryRunner
      *
      * @param  'query'|'ddl'  $action
      * @param  array<int|string, scalar|null>  $bindings
-     * @param  array{explain?: string|null, unmask?: bool, label?: string|null, user_id?: string|int|null}  $options
+     * @param  array{explain?: string|null, unmask?: bool, label?: string|null, user_id?: string|int|null, history?: bool}  $options
      * @param  array{columns: list<array{name: string, type: string, masked: bool}>, rows: list<list<mixed>>, affected: int|null, truncated: bool, notices: list<string>, noticesSupported: bool, committed: bool}|null  $result
      * @param  array<string, mixed>  $meta  Extra audit meta
      */
@@ -870,7 +872,7 @@ final class QueryRunner
         $audit = DbExplorer::audit($entry);
 
         if ($action === 'query') {
-            $this->recordQuery($audit, $connection, $sql, $role, $classification, $durationMs, $rowCount, $outcome, $error);
+            $this->recordQuery($audit, $connection, $sql, $role, $classification, $durationMs, $rowCount, $outcome, $error, ($options['history'] ?? true) !== false);
         }
 
         if ($result !== null && $result['committed'] && in_array($classification, [Classifier::DDL, Classifier::DESTRUCTIVE], true)) {
@@ -881,22 +883,24 @@ final class QueryRunner
     }
 
     /**
-     * The history row and QueryExecuted for an interactive query.
+     * The history row (unless `$history` is false) and QueryExecuted for an interactive query.
      */
-    private function recordQuery(AuditEntry $audit, string $connection, string $sql, string $role, string $classification, float $durationMs, ?int $rowCount, string $outcome, ?string $error): void
+    private function recordQuery(AuditEntry $audit, string $connection, string $sql, string $role, string $classification, float $durationMs, ?int $rowCount, string $outcome, ?string $error, bool $history): void
     {
-        QueryHistory::query()->insert([
-            'user_id' => $audit->user_id,
-            'label' => $audit->label ?? $connection,
-            'role' => $role,
-            'sql' => $sql,
-            'classification' => $classification,
-            'duration_ms' => (int) round($durationMs),
-            'row_count' => $rowCount,
-            'outcome' => $outcome,
-            'error' => $error,
-            'created_at' => Date::now()->format('Y-m-d H:i:s'),
-        ]);
+        if ($history) {
+            QueryHistory::query()->insert([
+                'user_id' => $audit->user_id,
+                'label' => $audit->label ?? $connection,
+                'role' => $role,
+                'sql' => $sql,
+                'classification' => $classification,
+                'duration_ms' => (int) round($durationMs),
+                'row_count' => $rowCount,
+                'outcome' => $outcome,
+                'error' => $error,
+                'created_at' => Date::now()->format('Y-m-d H:i:s'),
+            ]);
+        }
 
         event(new QueryExecuted(
             $audit->id,

@@ -514,3 +514,15 @@ it('refuses to join a transaction opened on the raw PDO, and leaves it alone', f
         ->and($name)->toBe('host')
         ->and(noteCount($this->schema))->toBe(3);
 });
+
+it('S17 skips only the history row when history is off', function () {
+    Event::fake([QueryExecuted::class]);
+
+    runQuery('pgsql_viewer', 'SELECT 1', 'viewer', [], ['history' => false]);
+    runFailure('pgsql_viewer', 'SELECT nope', 'viewer', [], ['history' => false]);
+
+    expect(QueryHistory::query()->count())->toBe(0)
+        ->and(AuditEntry::query()->where('action', 'query')->pluck('outcome')->all())->toBe(['success', 'error']);
+
+    Event::assertDispatchedTimes(QueryExecuted::class, 2);
+});
