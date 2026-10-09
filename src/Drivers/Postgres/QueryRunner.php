@@ -85,6 +85,9 @@ final class QueryRunner
     /** At most this many notices are kept per run. */
     public const MAX_NOTICES = 100;
 
+    /** Rows per FETCH when streaming a background run's result (PRD §7.6). */
+    public const STREAM_CHUNK = 5000;
+
     /** Leading keywords PostgreSQL accepts after DECLARE … FOR. */
     private const CURSOR_KEYWORDS = ['SELECT', 'VALUES', 'TABLE', 'WITH', '('];
 
@@ -381,6 +384,132 @@ final class QueryRunner
         }
 
         return new QueryResult($classification, [], [], 0, null, false, round($durationMs, 3), [], false, null, null, $auditId);
+    }
+
+    /**
+     * Quote a string literal on the connection, for values written into SQL
+     * INSERT exports (PRD §7.6). Values never reach SQL text any other way.
+     */
+    public function quote(string $connection, string $value): string
+    {
+        return $this->pdo($this->connection($connection))->quote($value);
+    }
+
+    /**
+     * Stream a read query's rows in chunks for a background run (PRD §7.6):
+     * memory stays flat whatever the result size.
+     *
+     * Inside one transaction (READ ONLY for viewers), after the best-effort
+     * hidden-object check (S13), the query runs behind a NO SCROLL cursor and
+     * `$onRows` receives every `FETCH FORWARD` chunk — already masked (S14;
+     * exports never unmask, whatever the role) — as
+     * `($columns, $rows)`, with `$columns` the full column list every time.
+     * Throwing from `$onRows` rolls the transaction back, so a cancel between
+     * chunks leaves nothing behind. Only statements PostgreSQL accepts in a
+     * DECLARE reach the cursor, and only queries the classifier calls read get
+     * here: the caller checks, and this method insists again.
+     *
+     * Returns the column list and the total row count. Nothing is audited
+     * here: the job's run records the export (S17).
+     *
+     * @param  array<int|string, scalar|null>  $bindings
+     * @param  Closure(list<array{name: string, type: string, masked: bool}>, list<list<mixed>>): void  $onRows
+     * @return array{columns: list<array{name: string, type: string, masked: bool}>, rows: int}
+     *
+     * @throws QueryFailed
+     * @throws InvalidArgumentException for an unknown role or a query that isn't a read
+     */
+    public function stream(string $connection, string $sql, array $bindings, string $role, Closure $onRows): array
+    {
+        if (! Role::isValid($role)) {
+            throw new InvalidArgumentException("Unknown role [{$role}].");
+        }
+
+        if (Classifier::classify($sql) !== Classifier::READ) {
+            throw new InvalidArgumentException('Only SELECT-style queries can run in the background.');
+        }
+
+        $timeout = $this->limit($role, 'timeout');
+        $db = $this->connection($connection);
+        $pdo = $this->pdo($db);
+
+        if ($db->transactionLevel() > 0 || $pdo->inTransaction()) {
+            throw new QueryFailed('The connection already has an open transaction.', '25001');
+        }
+
+        $settings = $this->sessionSettings($pdo, $connection);
+        $total = 0;
+        $meta = [];
+
+        try {
+            $pdo->exec($role === Role::VIEWER ? 'BEGIN READ ONLY' : 'BEGIN');
+            $this->prepare($pdo, "SELECT set_config('statement_timeout', ?, true)")->execute([(string) ($timeout * 1000)]);
+
+            $this->rejectHiddenRelations($pdo, $sql, $bindings);
+
+            $declare = $this->prepare($pdo, 'DECLARE '.self::CURSOR." NO SCROLL CURSOR FOR\n".$sql);
+            $this->bind($declare, $bindings);
+            $declare->execute();
+            $declare->closeCursor();
+
+            $fetch = $this->prepare($pdo, 'FETCH FORWARD '.self::STREAM_CHUNK.' FROM '.self::CURSOR);
+            $masker = app(Masker::class);
+            $columns = null;
+
+            while (true) {
+                $fetch->execute();
+                $rows = $this->fetch($fetch, self::STREAM_CHUNK);
+
+                if ($columns === null) {
+                    $meta = [];
+
+                    for ($i = 0; $i < $fetch->columnCount(); $i++) {
+                        $column = $fetch->getColumnMeta($i);
+                        $meta[] = is_array($column) ? $column : [];
+                    }
+
+                    $masks = $masker->forColumns($db, $meta, false);
+                    $columns = [];
+
+                    foreach ($meta as $position => $column) {
+                        $columns[] = [
+                            'name' => is_scalar($column['name'] ?? null) ? (string) $column['name'] : '',
+                            'type' => is_scalar($column['native_type'] ?? null) ? (string) $column['native_type'] : 'unknown',
+                            'masked' => $masks[$position] ?? false,
+                        ];
+                    }
+                }
+
+                if (in_array(true, array_values($masks), true)) {
+                    foreach ($rows as $i => $row) {
+                        $rows[$i] = array_values($masker->maskRow($row, $masks));
+                    }
+                }
+
+                $onRows($columns, $rows);
+                $total += count($rows);
+
+                if (count($rows) < self::STREAM_CHUNK) {
+                    break;
+                }
+            }
+
+            $fetch->closeCursor();
+            $pdo->exec('COMMIT');
+
+            /** @var list<array{name: string, type: string, masked: bool}> $columns */
+            return ['columns' => $columns, 'rows' => $total];
+        } catch (PDOException $e) {
+            $this->abort($db, $pdo);
+
+            throw QueryFailed::fromPdo($e, $sql);
+        } catch (Throwable $e) {
+            $this->abort($db, $pdo);
+
+            throw $e;
+        } finally {
+            $this->resetSession($pdo, $connection, $settings);
+        }
     }
 
     /**

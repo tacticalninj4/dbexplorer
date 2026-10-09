@@ -6,6 +6,7 @@ namespace TacticalNinj4\DbExplorer\Models;
 
 use Illuminate\Auth\AuthManager;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -14,6 +15,7 @@ use InvalidArgumentException;
 use TacticalNinj4\DbExplorer\Events\RunFinished;
 use TacticalNinj4\DbExplorer\Facades\DbExplorer;
 use TacticalNinj4\DbExplorer\Http\Middleware\ResolveRole;
+use TacticalNinj4\DbExplorer\Role;
 
 /**
  * One piece of background work (PRD §7.5): a background query, export, import,
@@ -195,6 +197,26 @@ class Run extends Model
     public function hasResult(): bool
     {
         return $this->status === RunStatus::SUCCEEDED && $this->result_path !== null;
+    }
+
+    /**
+     * The runs the request's user can see on their label (PRD §7.5): their
+     * own, and every run for the label's admin.
+     *
+     * @param  Builder<Run>  $query
+     * @return Builder<Run>
+     */
+    public function scopeVisibleTo(Builder $query, Request $request): Builder
+    {
+        $query->where('label', (string) $request->attributes->get(ResolveRole::LABEL));
+
+        if ($request->attributes->get(ResolveRole::ROLE) === Role::ADMIN) {
+            return $query;
+        }
+
+        $id = $request->user()?->getAuthIdentifier();
+
+        return is_scalar($id) ? $query->where('user_id', (string) $id) : $query->whereRaw('1 = 0');
     }
 
     /**

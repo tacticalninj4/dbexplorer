@@ -6,8 +6,6 @@ parameters:
         - %currentWorkingDirectory%/config
         - database
         - routes
-        # Uses Jobs\Concerns\TracksRun, so the trait is analysed until a src job uses it.
-        - tests/Jobs
     tmpDir: build/phpstan
     configDirectories:
         - %currentWorkingDirectory%/config
