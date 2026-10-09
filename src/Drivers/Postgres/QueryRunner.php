@@ -67,8 +67,8 @@ use Throwable;
  * Every run, successful or not, writes an audit entry (action `query`) and a
  * `dbx_query_history` row, then fires {@see QueryExecuted}. Neither stores bound
  * values: SQL text only, and error messages without DETAIL lines and with bound
- * values redacted. A committed run the classifier calls `ddl` or `destructive`
- * also fires {@see DdlExecuted}.
+ * values redacted. A committed run that Classifier::isDdl() calls DDL (not
+ * destructive DML) also fires {@see DdlExecuted}.
  *
  * runStatements() runs the schema editor's statement list in one transaction
  * through atomic(), audited as one `ddl` entry.
@@ -271,7 +271,7 @@ final class QueryRunner
      *
      * One audit entry (action `ddl`) covers the list, its SQL the statements
      * joined with ";\n"; there is no history row and no QueryExecuted. On
-     * commit, DDL or destructive SQL fires {@see DdlExecuted}.
+     * commit, DDL fires {@see DdlExecuted}.
      *
      * @param  list<string>  $statements
      * @param  array{label?: string|null, user_id?: string|int|null}  $options
@@ -834,8 +834,8 @@ final class QueryRunner
 
     /**
      * Audit entry, then for `query` the history row (unless the `history`
-     * option is false) and QueryExecuted, then DdlExecuted when DDL or
-     * destructive SQL committed. Returns the audit id.
+     * option is false) and QueryExecuted, then DdlExecuted when DDL (see
+     * Classifier::isDdl()) committed. Returns the audit id.
      *
      * @param  'query'|'ddl'  $action
      * @param  array<int|string, scalar|null>  $bindings
@@ -910,7 +910,7 @@ final class QueryRunner
             ));
         }
 
-        if ($result !== null && $result['committed'] && in_array($classification, [Classifier::DDL, Classifier::DESTRUCTIVE], true)) {
+        if ($result !== null && $result['committed'] && Classifier::isDdl($sql)) {
             event(new DdlExecuted($audit->id, $audit->user_id, $audit->label, $role, $classification, $sql));
         }
 

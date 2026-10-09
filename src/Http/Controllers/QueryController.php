@@ -34,7 +34,9 @@ class QueryController
      * gates the request, for UX only (S11): the database grants and the
      * viewer's read-only transaction are the real boundary.
      *
-     * 1. `ddl` from a non-admin: 403.
+     * 1. DDL from a non-admin: 403. That is `ddl`, and destructive DDL (DROP,
+     *    TRUNCATE, ALTER … DROP), see Classifier::isDdl(). Destructive DML
+     *    (UPDATE or DELETE without WHERE) goes on to steps 2 and 3.
      * 2. Anything but `read` (so `unknown` too: the classifier can't vouch that
      *    it only reads) without `confirm: true`: 409 `{error: {message, code:
      *    'confirmation_required', classification}}`, nothing runs. The client
@@ -73,7 +75,7 @@ class QueryController
         if (($input['explain'] ?? null) === null) {
             $classification = Classifier::classify((string) $input['sql']);
 
-            abort_if($classification === Classifier::DDL && $role !== Role::ADMIN, 403, 'Only admins can run DDL (CREATE, ALTER, GRANT, ...).');
+            abort_if($role !== Role::ADMIN && Classifier::isDdl((string) $input['sql']), 403, 'Only admins can run DDL (CREATE, ALTER, DROP, TRUNCATE, GRANT, ...).');
 
             if ($classification !== Classifier::READ && ! (bool) ($input['confirm'] ?? false)) {
                 return new JsonResponse(['error' => [

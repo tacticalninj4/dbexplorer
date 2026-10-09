@@ -5,8 +5,9 @@ declare(strict_types=1);
 namespace TacticalNinj4\DbExplorer\Events;
 
 /**
- * Fired after DDL or destructive SQL ran and committed, once its audit row is
- * written (IMPLEMENTATION_PLAN §3a): from the SQL editor and the schema editor.
+ * Fired after DDL (including DROP, TRUNCATE and ALTER … DROP, but not UPDATE
+ * or DELETE without WHERE) ran and committed, once its audit row is written
+ * (IMPLEMENTATION_PLAN §3a): from the SQL editor and the schema editor.
  *
  * Never carries bound parameter values, result values or connection config.
  */

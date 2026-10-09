@@ -192,6 +192,26 @@ it('never crashes on unterminated input', function (string $sql, string $expecte
     ['EXPLAIN (ANALYZE', Classifier::UNKNOWN],
 ]);
 
+it('tells DDL, including destructive DDL, from destructive DML', function (string $sql, bool $ddl) {
+    expect(Classifier::isDdl($sql))->toBe($ddl);
+})->with([
+    ['CREATE TABLE t (id int)', true],
+    ['DROP TABLE t', true],
+    ['(DROP TABLE t)', true],
+    ['truncate t', true],
+    ['ALTER TABLE t DROP COLUMN c', true],
+    ['ALTER TABLE t ADD COLUMN c int', true],
+    ['/* x */ DROP TABLE t', true],
+    ['SELECT 1; DROP TABLE t', true],
+    ['DELETE FROM t', false],
+    ['UPDATE t SET a = 1', false],
+    ['WITH d AS (DELETE FROM t RETURNING *) SELECT 1', false],
+    ['DELETE FROM t WHERE id = 1', false],
+    ['SELECT 1', false],
+    ['LOCK TABLE t', false],
+    ['', false],
+]);
+
 it('returns each statement with its offset, text and class', function () {
     $sql = "-- lead\nSELECT 1;\n\n  DELETE FROM t /* all */ ;; -- trailing\n";
 

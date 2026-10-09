@@ -179,11 +179,26 @@ it('does not ask to confirm a destructive statement that is only explained', fun
 it('answers DDL from viewers and editors with 403 before it reaches the database', function (string $role) {
     writeQuery($this, $role, "CREATE TABLE {$this->schema}.made (id int)")
         ->assertForbidden()
-        ->assertJsonPath('message', 'Only admins can run DDL (CREATE, ALTER, GRANT, ...).');
+        ->assertJsonPath('message', 'Only admins can run DDL (CREATE, ALTER, DROP, TRUNCATE, GRANT, ...).');
 
     expect(tableExists("{$this->schema}.made"))->toBeFalse()
         ->and(AuditEntry::query()->where('action', 'query')->count())->toBe(0);
 })->with(['viewer', 'editor']);
+
+it('answers destructive DDL from viewers and editors with 403 before asking to confirm', function (string $role, string $sql) {
+    writeQuery($this, $role, str_replace('{schema}', $this->schema, $sql), false)
+        ->assertForbidden()
+        ->assertJsonPath('message', 'Only admins can run DDL (CREATE, ALTER, DROP, TRUNCATE, GRANT, ...).');
+
+    expect(tableExists("{$this->schema}.notes"))->toBeTrue()
+        ->and(notesLeft($this->schema))->toBe(3)
+        ->and(AuditEntry::query()->where('action', 'query')->count())->toBe(0);
+})->with([
+    'editor DROP' => ['editor', 'DROP TABLE {schema}.notes'],
+    'editor TRUNCATE' => ['editor', 'TRUNCATE {schema}.notes'],
+    'editor ALTER ... DROP' => ['editor', 'ALTER TABLE {schema}.notes DROP COLUMN body'],
+    'viewer DROP' => ['viewer', 'DROP TABLE {schema}.notes'],
+]);
 
 it('lets an editor run SQL the classifier cannot place, leaving the database to decide', function () {
     writeQuery($this, 'editor', "LOCK TABLE {$this->schema}.notes IN SHARE MODE")
@@ -223,7 +238,7 @@ it('runs DDL for an admin and fires DdlExecuted after the audit row, without bin
         ->and($payload)->not->toContain('$2y$');
 });
 
-it('fires DdlExecuted for committed destructive SQL, but not for reads, DML, failures or explains', function () {
+it('fires DdlExecuted for committed destructive DDL, but not for reads, DML, destructive DML, failures or explains', function () {
     Event::fake([DdlExecuted::class]);
     $this->withSession(['auth.password_confirmed_at' => time()]);
 
@@ -231,6 +246,8 @@ it('fires DdlExecuted for committed destructive SQL, but not for reads, DML, fai
     writeQuery($this, 'admin', "UPDATE {$this->schema}.notes SET body = 'x' WHERE id = 1")->assertOk();
     writeQuery($this, 'admin', 'CREATE TABLE no_such_schema.made (id int)')->assertStatus(422);
     $this->postJson('/dbexplorer/api/main/query', ['sql' => "DELETE FROM {$this->schema}.notes", 'explain' => 'analyze'])->assertOk();
+    writeQuery($this, 'admin', "UPDATE {$this->schema}.notes SET body = 'y'")->assertOk()->assertJsonPath('data.classification', 'destructive');
+    writeQuery($this, 'admin', "WITH d AS (DELETE FROM {$this->schema}.notes WHERE id = 1 RETURNING id) DELETE FROM {$this->schema}.notes")->assertOk();
 
     Event::assertNotDispatched(DdlExecuted::class);
 
