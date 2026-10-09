@@ -199,13 +199,15 @@ class Run extends Model
 
     /**
      * The run as the API shows it. Never the result's disk or path, the
-     * backend pid or meta (which can hold SQL and bound values).
+     * backend pid or meta (which can hold SQL and bound values) — except the
+     * per-statement outcomes a script run keeps in `meta.statements`, reduced
+     * to `{line, status, duration_ms, affected}`: no SQL text.
      *
      * @return array<string, mixed>
      */
     public function toApi(): array
     {
-        return [
+        $api = [
             'id' => $this->id,
             'type' => $this->type,
             'status' => $this->status,
@@ -220,5 +222,18 @@ class Run extends Model
             'started_at' => $this->started_at?->toIso8601String(),
             'finished_at' => $this->finished_at?->toIso8601String(),
         ];
+
+        foreach ((array) ($this->meta['statements'] ?? []) as $statement) {
+            if (is_array($statement)) {
+                $api['statements'][] = [
+                    'line' => (int) ($statement['line'] ?? 0),
+                    'status' => (string) ($statement['status'] ?? 'skipped'),
+                    'duration_ms' => isset($statement['duration_ms']) && is_numeric($statement['duration_ms']) ? (float) $statement['duration_ms'] : null,
+                    'affected' => isset($statement['affected']) && is_numeric($statement['affected']) ? (int) $statement['affected'] : null,
+                ];
+            }
+        }
+
+        return $api;
     }
 }

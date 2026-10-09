@@ -203,7 +203,6 @@ final class QueryRunner
         }
 
         $timeout = $this->limit($role, 'timeout');
-        $cap = $this->limit($role, 'rows');
         $db = $this->connection($connection);
         $pdo = $this->pdo($db);
 
@@ -214,28 +213,7 @@ final class QueryRunner
 
         $settings = $this->sessionSettings($pdo, $connection);
         $sql = '';
-
-        $statement = function (string $text, array $bindings) use ($pdo, $cap, &$sql): array {
-            $sql = $text;
-            $this->validateBindings($bindings);
-
-            $prepared = $this->prepare($pdo, $text);
-            $this->bind($prepared, $bindings);
-            $prepared->execute();
-
-            $rows = $this->fetch($prepared, $cap);
-            $columns = [];
-
-            for ($i = 0; $i < $prepared->columnCount(); $i++) {
-                $meta = $prepared->getColumnMeta($i);
-                $columns[] = is_array($meta) ? $meta['name'] : '';
-            }
-
-            $affected = $prepared->rowCount();
-            $prepared->closeCursor();
-
-            return ['columns' => $columns, 'rows' => $rows, 'affected' => $affected];
-        };
+        $statement = $this->statement($pdo, $this->limit($role, 'rows'), $sql);
 
         try {
             $pdo->exec($role === Role::VIEWER ? 'BEGIN READ ONLY' : 'BEGIN');
@@ -258,6 +236,83 @@ final class QueryRunner
             // The transaction is closed by now, so DISCARD can't pull a live statement away.
             $this->resetSession($pdo, $connection, $settings);
         }
+    }
+
+    /**
+     * Run a callback whose statements each auto-commit on their own, with the
+     * same session handling as atomic() but no transaction around them: the
+     * only path for statements PostgreSQL refuses inside a transaction block,
+     * such as CREATE INDEX CONCURRENTLY (the script runner's step mode, PRD
+     * §7.7). An error leaves the statements that already ran committed; the
+     * caller decides what that means.
+     *
+     * @template T
+     *
+     * @param  Closure(Closure(string, array<int, scalar|null>): array{columns: list<string>, rows: list<list<mixed>>, affected: int}): T  $callback
+     * @return T
+     *
+     * @throws QueryFailed
+     */
+    public function autoCommit(string $connection, string $role, Closure $callback): mixed
+    {
+        if (! Role::isValid($role)) {
+            throw new InvalidArgumentException("Unknown role [{$role}].");
+        }
+
+        $timeout = $this->limit($role, 'timeout');
+        $db = $this->connection($connection);
+        $pdo = $this->pdo($db);
+
+        if ($db->transactionLevel() > 0 || $pdo->inTransaction()) {
+            throw new QueryFailed('The connection already has an open transaction.', '25001');
+        }
+
+        $settings = $this->sessionSettings($pdo, $connection);
+        $sql = '';
+        $statement = $this->statement($pdo, $this->limit($role, 'rows'), $sql);
+
+        try {
+            // Session-level, not SET LOCAL: there is no transaction to scope it to.
+            $this->prepare($pdo, "SELECT set_config('statement_timeout', ?, false)")->execute([(string) ($timeout * 1000)]);
+
+            return $callback($statement);
+        } catch (PDOException $e) {
+            throw QueryFailed::fromPdo($e, $sql);
+        } finally {
+            $this->resetSession($pdo, $connection, $settings);
+        }
+    }
+
+    /**
+     * The single-statement runner shared by atomic() and autoCommit(): native
+     * prepare, bound values, rows capped while fetching, columns and affected
+     * count. `$sql` collects the running statement for error reporting.
+     *
+     * @param  string|null  $sql  (by reference)
+     */
+    private function statement(PDO $pdo, int $cap, ?string &$sql): Closure
+    {
+        return function (string $text, array $bindings) use ($pdo, $cap, &$sql): array {
+            $sql = $text;
+            $this->validateBindings($bindings);
+
+            $prepared = $this->prepare($pdo, $text);
+            $this->bind($prepared, $bindings);
+            $prepared->execute();
+
+            $rows = $this->fetch($prepared, $cap);
+            $columns = [];
+
+            for ($i = 0; $i < $prepared->columnCount(); $i++) {
+                $meta = $prepared->getColumnMeta($i);
+                $columns[] = is_array($meta) ? $meta['name'] : '';
+            }
+
+            $affected = $prepared->rowCount();
+            $prepared->closeCursor();
+
+            return ['columns' => $columns, 'rows' => $rows, 'affected' => $affected];
+        };
     }
 
     /**
