@@ -39,10 +39,14 @@ abstract class TestCase extends Orchestra
             'prefix' => '',
             'foreign_key_constraints' => true,
         ]);
-        // Hermetic against a stray skeleton .env (e.g. CACHE_STORE=database after composer build).
+        // Hermetic against a stray skeleton .env (e.g. CACHE_STORE=database
+        // or QUEUE_CONNECTION=database after `composer serve` builds one):
+        // MeController's queue-health check would otherwise query dbx_runs
+        // in tests that never migrate it.
         $app['config']->set('cache.default', 'array');
         $app['config']->set('cache.store', 'array');
         $app['config']->set('session.driver', 'array');
+        $app['config']->set('queue.default', 'sync');
         $app['config']->set('app.key', 'base64:'.base64_encode(str_repeat('k', 32)));
         $app['config']->set('dbexplorer.enabled', true);
         $app['config']->set($this->bootConfig);
