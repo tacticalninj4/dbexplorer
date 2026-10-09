@@ -26,7 +26,8 @@ it('lists every allowlisted label as viewer when no role callback is registered'
                 ['label' => 'staging', 'role' => 'viewer'],
                 ['label' => 'reporting', 'role' => 'viewer'],
             ],
-            'warnings' => [],
+            // Testbench's queue is sync (RunsTest covers the queue warnings).
+            'warnings' => ['The queue driver is "sync": background work runs inside the request and blocks it until done.'],
         ]);
 });
 
@@ -90,6 +91,9 @@ it('warns when two roles of a label share a Laravel connection, naming only the 
         'staging' => ['viewer' => 'staging', 'editor' => 'staging', 'admin' => 'staging'],
         'reporting' => ['viewer' => 'reporting'],
     ]]);
+    // Isolates the shared-connection warnings from the queue-health ones.
+    config(['queue.connections.dbx-test' => ['driver' => 'database'], 'dbexplorer.queue.connection' => 'dbx-test']);
+    $this->artisan('migrate');
 
     $body = $this->actingAs(makeUser())->getJson('/dbexplorer/api/me')->assertOk();
 
@@ -104,6 +108,8 @@ it('warns when two roles of a label share a Laravel connection, naming only the 
 it('does not warn about labels the user cannot use', function () {
     config(['dbexplorer.connections.staging' => ['viewer' => 'staging', 'admin' => 'staging']]);
     DbExplorer::roleUsing(fn (User $user, string $label): ?string => $label === 'main' ? 'viewer' : null);
+    config(['queue.connections.dbx-test' => ['driver' => 'database'], 'dbexplorer.queue.connection' => 'dbx-test']);
+    $this->artisan('migrate');
 
     $this->actingAs(makeUser())->getJson('/dbexplorer/api/me')->assertOk()->assertJsonPath('warnings', []);
 });

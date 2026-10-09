@@ -64,7 +64,7 @@ it('S6 does not define the limiter while the package is disabled', function () {
 it('S6 throttles every per-connection API route with the dbexplorer limiter', function () {
     $routes = array_filter(Route::getRoutes()->getRoutes(), fn ($route): bool => str_contains($route->uri(), '{label}'));
 
-    expect($routes)->toHaveCount(21);
+    expect($routes)->toHaveCount(24);
 
     foreach ($routes as $route) {
         expect($route->gatherMiddleware())->toContain('throttle:dbexplorer');
