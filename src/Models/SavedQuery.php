@@ -19,7 +19,7 @@ use Illuminate\Support\Carbon;
  * @property string $name
  * @property string|null $description
  * @property string $sql
- * @property array<int, array<string, mixed>>|null $params
+ * @property array<int, mixed>|null $params
  * @property string $visibility
  * @property array<int, string>|null $tags
  * @property Carbon $created_at

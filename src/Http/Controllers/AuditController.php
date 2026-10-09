@@ -37,14 +37,28 @@ class AuditController
 
         $page = (int) ($input['page'] ?? 1);
 
-        $entries = AuditEntry::query()
-            ->when(isset($input['user_id']), fn ($query) => $query->where('user_id', $input['user_id']))
-            ->when(isset($input['label']), fn ($query) => $query->where('label', $input['label']))
-            ->when(isset($input['action']), fn ($query) => $query->where('action', 'like', str_replace('*', '%', $input['action'])))
-            ->when(isset($input['classification']), fn ($query) => $query->where('classification', $input['classification']))
-            ->when(isset($input['outcome']), fn ($query) => $query->where('outcome', $input['outcome']))
-            ->when(isset($input['from']), fn ($query) => $query->where('created_at', '>=', $input['from']))
-            ->when(isset($input['to']), fn ($query) => $query->where('created_at', '<=', $input['to']))
+        $entries = AuditEntry::query();
+
+        foreach ([
+            ['user_id', 'where', 'user_id'],
+            ['label', 'where', 'label'],
+            ['action', 'like', 'action'],
+            ['classification', 'where', 'classification'],
+            ['outcome', 'where', 'outcome'],
+        ] as [$key, $mode, $column]) {
+            if (isset($input[$key])) {
+                $value = (string) $input[$key];
+                $entries->where($column, $mode === 'like' ? 'like' : '=', $mode === 'like' ? str_replace('*', '%', $value) : $value);
+            }
+        }
+
+        foreach ([['from', '>='], ['to', '<=']] as [$key, $operator]) {
+            if (isset($input[$key])) {
+                $entries->where('created_at', $operator, (string) $input[$key]);
+            }
+        }
+
+        $entries = $entries
             ->orderByDesc('id')
             ->offset(($page - 1) * self::PER_PAGE)
             ->limit(self::PER_PAGE + 1)
