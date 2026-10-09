@@ -437,8 +437,11 @@ const modKey = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl';
                 <template v-else-if="run.result">
                     <div class="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-zinc-200 px-3 py-1.5 text-sm dark:border-zinc-800">
                         <span class="rounded px-1.5 py-0.5 text-xs font-medium" :class="classificationClass[run.result.classification]">{{ run.result.classification }}</span>
-                        <span class="tabular-nums">{{ formatNumber(run.result.row_count) }} {{ run.result.row_count === 1 ? 'row' : 'rows' }}</span>
-                        <span v-if="run.result.affected_rows !== null" class="tabular-nums">{{ formatNumber(run.result.affected_rows) }} affected</span>
+                        <span v-if="run.result.explain" class="text-zinc-600 dark:text-zinc-300">{{ run.result.explain === 'analyze' ? 'EXPLAIN ANALYZE' : 'EXPLAIN' }}</span>
+                        <template v-else>
+                            <span class="tabular-nums">{{ formatNumber(run.result.row_count) }} {{ run.result.row_count === 1 ? 'row' : 'rows' }}</span>
+                            <span v-if="run.result.affected_rows !== null" class="tabular-nums">{{ formatNumber(run.result.affected_rows) }} affected</span>
+                        </template>
                         <span class="text-zinc-500 tabular-nums">{{ formatDuration(run.result.duration_ms) }}</span>
                         <span v-if="run.result.truncated" class="text-amber-700 dark:text-amber-400">Showing the first {{ formatNumber(run.result.row_count) }} rows: your row limit cut the rest.</span>
                         <div role="tablist" aria-label="Result views" class="ml-auto flex gap-1">

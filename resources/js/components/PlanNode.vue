@@ -9,6 +9,9 @@ const props = withDefaults(defineProps<{ node: PlanData; depth?: number; analyze
 
 const SHOWN = ['Node Type', 'Plans', 'Relation Name', 'Alias', 'Schema', 'Index Name', 'Join Type', 'Startup Cost', 'Total Cost', 'Plan Rows', 'Plan Width', 'Actual Startup Time', 'Actual Total Time', 'Actual Rows', 'Actual Loops'];
 
+// Conditions are what people look for first: shown without expanding.
+const CONDITIONS = ['Index Cond', 'Recheck Cond', 'Hash Cond', 'Merge Cond', 'Join Filter', 'Filter'];
+
 const children = computed(() => (Array.isArray(props.node.Plans) ? (props.node.Plans as PlanData[]) : []));
 const title = computed(() => {
     const n = props.node;
@@ -26,7 +29,7 @@ const title = computed(() => {
 });
 const details = computed(() =>
     Object.entries(props.node)
-        .filter(([key]) => !SHOWN.includes(key))
+        .filter(([key]) => !SHOWN.includes(key) && !CONDITIONS.includes(key))
         .map(([key, value]) => [key, typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value)] as const),
 );
 const num = (key: string): number | null => (typeof props.node[key] === 'number' ? (props.node[key] as number) : null);
@@ -44,12 +47,18 @@ const num = (key: string): number | null => (typeof props.node[key] === 'number'
                     actual {{ num('Actual Total Time') }} ms · rows {{ formatNumber(num('Actual Rows')) }} · loops {{ num('Actual Loops') }}
                 </span>
             </summary>
-            <dl v-if="details.length" class="ml-6 grid grid-cols-[max-content_1fr] gap-x-3 py-1 text-xs">
-                <template v-for="[key, value] in details" :key="key">
-                    <dt class="text-zinc-500 dark:text-zinc-400">{{ key }}</dt>
-                    <dd class="font-mono break-all">{{ value }}</dd>
-                </template>
-            </dl>
+            <details v-if="details.length" class="ml-6 text-xs">
+                <summary class="cursor-pointer text-zinc-500 focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:outline-none dark:text-zinc-400">{{ details.length }} more properties</summary>
+                <dl class="grid grid-cols-[max-content_1fr] gap-x-3 py-1">
+                    <template v-for="[key, value] in details" :key="key">
+                        <dt class="text-zinc-500 dark:text-zinc-400">{{ key }}</dt>
+                        <dd class="font-mono break-all">{{ value }}</dd>
+                    </template>
+                </dl>
+            </details>
+            <p v-for="key in CONDITIONS.filter((k) => typeof node[k] === 'string')" :key="key" class="ml-6 font-mono text-xs text-zinc-600 dark:text-zinc-300">
+                {{ key }}: {{ node[key] }}
+            </p>
             <ul v-if="children.length" class="ml-4 border-l border-zinc-200 pl-2 dark:border-zinc-700">
                 <PlanNode v-for="(child, index) in children" :key="index" :node="child" :depth="depth + 1" :analyze="analyze" />
             </ul>

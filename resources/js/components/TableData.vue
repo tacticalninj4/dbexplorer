@@ -193,7 +193,7 @@ watch(
                 <span class="ml-2 text-zinc-500 tabular-nums dark:text-zinc-400">
                     <template v-if="count.value === null">Row count unknown</template>
                     <template v-else-if="count.exact">{{ formatNumber(count.value) }} rows</template>
-                    <template v-else>≈ {{ formatNumber(count.value) }} rows (estimate)</template>
+                    <template v-else>≈ {{ formatNumber(count.value) }} rows {{ filters.length ? 'in the table' : '' }} (estimate)</template>
                 </span>
                 <button v-if="!count.exact" type="button" class="dbx-btn" :disabled="loading" @click="load(true)">
                     {{ counting ? 'Counting…' : 'Exact count' }}

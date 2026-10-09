@@ -1,6 +1,6 @@
 {
   "resources/js/app.ts": {
-    "file": "assets/app-DGY4wZZn.js",
+    "file": "assets/app-DOa4zuhk.js",
     "name": "app",
     "src": "resources/js/app.ts",
     "isEntry": true,
@@ -12,7 +12,7 @@
     ]
   },
   "resources/js/views/SqlEditorView.vue": {
-    "file": "assets/SqlEditorView-BNKiIyKF.js",
+    "file": "assets/SqlEditorView-CfL55h71.js",
     "name": "SqlEditorView",
     "src": "resources/js/views/SqlEditorView.vue",
     "isDynamicEntry": true,

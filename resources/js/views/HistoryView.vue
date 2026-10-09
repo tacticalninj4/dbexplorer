@@ -68,7 +68,7 @@ const outcomeClass = (outcome: string) =>
                             <span class="dbx-badge">{{ entry.classification }}</span>
                             <span :class="outcomeClass(entry.outcome)">{{ entry.outcome }}</span>
                             <span>{{ formatDuration(entry.duration_ms) }}</span>
-                            <span v-if="entry.row_count !== null">{{ formatNumber(entry.row_count) }} rows</span>
+                            <span v-if="entry.row_count !== null">{{ formatNumber(entry.row_count) }} {{ entry.row_count === 1 ? 'row' : 'rows' }}</span>
                             <span>as {{ entry.role }}</span>
                         </span>
                         <span class="mt-1.5 line-clamp-4 block font-mono text-xs whitespace-pre-wrap text-zinc-800 dark:text-zinc-200">{{ entry.sql }}</span>
