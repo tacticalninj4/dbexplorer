@@ -28,13 +28,7 @@ class BackupController
     {
         $this->authorize($request);
 
-        $tool = new BackupTool($db->connection((string) $request->attributes->get(ResolveRole::CONNECTION)), (string) config('dbexplorer.backup.pg_dump_path', 'pg_dump'));
-
-        try {
-            $preflight = $tool->preflight();
-        } catch (Throwable) {
-            $preflight = 'The database could not be reached for the pg_dump version check.';
-        }
+        $preflight = $this->preflight($request, $db);
 
         $disk = (string) config('dbexplorer.backup.disk', 'local');
         $label = (string) $request->attributes->get(ResolveRole::LABEL);
@@ -63,14 +57,39 @@ class BackupController
         ]]);
     }
 
-    public function store(Request $request): JsonResponse
+    /**
+     * Queue a backup: 202 with the run, or 422 with the preflight's problem
+     * (pg_dump missing, older than the server, database unreachable), so a
+     * dump that can't work is never queued.
+     */
+    public function store(Request $request, DatabaseManager $db): JsonResponse
     {
         $this->authorize($request);
+
+        $preflight = $this->preflight($request, $db);
+
+        if ($preflight !== null) {
+            return new JsonResponse(['error' => ['message' => $preflight]], 422);
+        }
 
         $run = Run::queueFor($request, BackupJob::TYPE, []);
         BackupJob::dispatch($run->id);
 
         return new JsonResponse(['data' => $run->toApi()], 202);
+    }
+
+    /**
+     * Null when pg_dump can dump this label's database, the problem otherwise.
+     */
+    private function preflight(Request $request, DatabaseManager $db): ?string
+    {
+        $tool = new BackupTool($db->connection((string) $request->attributes->get(ResolveRole::CONNECTION)), (string) config('dbexplorer.backup.pg_dump_path', 'pg_dump'));
+
+        try {
+            return $tool->preflight();
+        } catch (Throwable) {
+            return 'The database could not be reached for the pg_dump version check.';
+        }
     }
 
     private function authorize(Request $request): void

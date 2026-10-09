@@ -10,8 +10,8 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
-use RuntimeException;
 use TacticalNinj4\DbExplorer\Drivers\Postgres\BackupTool;
+use TacticalNinj4\DbExplorer\Exceptions\RunFailed;
 use TacticalNinj4\DbExplorer\Jobs\Concerns\TracksRun;
 use TacticalNinj4\DbExplorer\Models\Run;
 
@@ -23,7 +23,8 @@ use TacticalNinj4\DbExplorer\Models\Run;
  * docs say so; the API never restores.
  *
  * The run's result fields point at the stored dump, so the signed download
- * flow (S16) serves it to the run's owner.
+ * flow (S16) serves it to the run's owner. A failed preflight or dump fails
+ * the run with the real cause (connection details redacted) as its error.
  */
 final class Backup implements ShouldQueue
 {
@@ -34,6 +35,13 @@ final class Backup implements ShouldQueue
     protected function process(Run $run, string $connection): void
     {
         $tool = new BackupTool(DB::connection($connection), (string) config('dbexplorer.backup.pg_dump_path', 'pg_dump'));
+
+        // The same check the API ran before queueing: things may have changed since.
+        $problem = $tool->preflight();
+
+        if ($problem !== null) {
+            throw new RunFailed($problem);
+        }
 
         $disk = (string) config('dbexplorer.backup.disk', 'local');
         $storage = Storage::disk($disk);
@@ -49,7 +57,7 @@ final class Backup implements ShouldQueue
         $target = $storage->path($relative);
 
         if ($target === '' || ! is_dir(dirname($target))) {
-            throw new RuntimeException("The backup disk [{$disk}] has no local path for pg_dump to write to. Point dbexplorer.backup.disk at a filesystem disk.");
+            throw new RunFailed("The backup disk [{$disk}] has no local path for pg_dump to write to. Point dbexplorer.backup.disk at a filesystem disk.");
         }
 
         /** @var list<string> $schemas */
@@ -60,7 +68,7 @@ final class Backup implements ShouldQueue
         if (! $process->isSuccessful()) {
             $storage->delete($relative);
 
-            throw new RuntimeException(BackupTool::describeFailure($process));
+            throw new RunFailed($tool->describeFailure($process));
         }
 
         $bytes = (int) $storage->size($relative);

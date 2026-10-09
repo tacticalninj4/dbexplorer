@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Testing\TestResponse;
 use Symfony\Component\Process\Process;
@@ -66,8 +67,11 @@ it('S20 builds the dump command as an argument array, with the password only in 
 });
 
 it('preflights the pg_dump version against the server', function () {
+    // One major below whatever server the lane runs (PostgreSQL 12 to 18).
+    $serverMajor = intdiv((int) DB::connection('pgsql_admin')->selectOne('SHOW server_version_num')->server_version_num, 10000);
+
     $old = tempnam(sys_get_temp_dir(), 'pgdump-old').'.sh';
-    file_put_contents($old, "#!/bin/sh\necho 'pg_dump (PostgreSQL) 12.9'\n");
+    file_put_contents($old, "#!/bin/sh\necho 'pg_dump (PostgreSQL) ".($serverMajor - 1).".9'\n");
     chmod($old, 0755);
 
     $oldTool = new BackupTool(DB::connection('pgsql_admin'), $old);
@@ -137,8 +141,27 @@ it('backs the database up through the job, downloads through the run, and retain
     }
 })->skip(DB_DUMP_PATH === '', 'pg_dump not found in PATH');
 
-it('fails the run when pg_dump itself fails', function () {
+/**
+ * A fake pg_dump: reports $version, and fails a dump with a libpq-style
+ * error that quotes the connection's host, port, login and password.
+ */
+function fakePgDump(string $version): string
+{
+    $config = DB::connection('pgsql_admin')->getConfig();
+    $path = tempnam(sys_get_temp_dir(), 'pgdump-fail');
+
+    file_put_contents($path, "#!/bin/sh\n"
+        ."if [ \"\$1\" = --version ]; then echo 'pg_dump (PostgreSQL) {$version}'; exit 0; fi\n"
+        ."echo 'pg_dump: error: connection to server at \"{$config['host']}\", port {$config['port']} failed: FATAL:  password authentication failed for user \"{$config['username']}\" (password {$config['password']}) on {$config['database']}' >&2\n"
+        ."exit 1\n");
+    chmod($path, 0755);
+
+    return $path;
+}
+
+it('fails the run with the preflight\'s problem when pg_dump is missing at run time', function () {
     config(['dbexplorer.backup.pg_dump_path' => '/nonexistent/pg_dump']);
+    DbExplorer::roleUsing(fn (): string => 'admin');
 
     $run = Run::query()->create([
         'type' => Backup::TYPE,
@@ -151,8 +174,60 @@ it('fails the run when pg_dump itself fails', function () {
     app()->call([new Backup($run->id), 'handle']);
 
     expect($run->refresh()->status)->toBe(RunStatus::FAILED)
-        ->and($run->error)->not->toBeNull()
-        ->and(Storage::disk('local')->exists('backups'))->toBeFalse();
+        ->and($run->error)->toStartWith('pg_dump could not be run')
+        ->and(Storage::disk('local')->exists('backups/main/run-'.$run->id.'.dump'))->toBeFalse();
+});
+
+it('fails the run with pg_dump\'s own error, connection details redacted', function () {
+    $fake = fakePgDump('99.1');
+    config(['dbexplorer.backup.pg_dump_path' => $fake]);
+    DbExplorer::roleUsing(fn (): string => 'admin');
+
+    $run = Run::query()->create([
+        'type' => Backup::TYPE,
+        'user_id' => '1',
+        'label' => 'main',
+        'role' => 'admin',
+        'meta' => [Run::USER_PROVIDER => 'users'],
+    ]);
+
+    app()->call([new Backup($run->id), 'handle']);
+
+    $config = DB::connection('pgsql_admin')->getConfig();
+
+    expect($run->refresh()->status)->toBe(RunStatus::FAILED)
+        ->and($run->error)->toStartWith('pg_dump failed: pg_dump: error: connection to server at "[redacted]", port [redacted] failed: FATAL:  password authentication failed')
+        ->not->toContain((string) $config['host'])
+        ->not->toContain((string) $config['username'])
+        ->not->toContain((string) $config['password'])
+        ->not->toContain((string) $config['database'])
+        ->and(Storage::disk('local')->exists('backups/main/run-'.$run->id.'.dump'))->toBeFalse();
+
+    unlink($fake);
+});
+
+it('refuses to queue a backup the preflight says would fail, with its message', function (string $path, string $message) {
+    Queue::fake();
+    config(['dbexplorer.backup.pg_dump_path' => $path === 'old' ? fakePgDump('9.6') : $path]);
+
+    backupsAs($this, 'POST')
+        ->assertStatus(422)
+        ->assertJsonPath('error.message', fn (string $text): bool => str_contains($text, $message));
+
+    expect(Run::query()->count())->toBe(0);
+    Queue::assertNothingPushed();
+})->with([
+    'binary missing' => ['/nonexistent/pg_dump', 'pg_dump could not be run'],
+    'older than the server' => ['old', 'older than the server'],
+]);
+
+it('queues a backup when the preflight passes', function () {
+    Queue::fake();
+    config(['dbexplorer.backup.pg_dump_path' => fakePgDump('99.1')]);
+
+    backupsAs($this, 'POST')->assertStatus(202)->assertJsonPath('data.type', Backup::TYPE);
+
+    Queue::assertPushed(Backup::class);
 });
 
 it('answers the backups page for admins only', function (string $role) {

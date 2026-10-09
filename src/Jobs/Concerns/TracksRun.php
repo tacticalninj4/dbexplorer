@@ -12,6 +12,7 @@ use TacticalNinj4\DbExplorer\Drivers\Postgres\QueryRunner;
 use TacticalNinj4\DbExplorer\Exceptions\ConnectionNotAllowedException;
 use TacticalNinj4\DbExplorer\Exceptions\QueryFailed;
 use TacticalNinj4\DbExplorer\Exceptions\RunCancelled;
+use TacticalNinj4\DbExplorer\Exceptions\RunFailed;
 use TacticalNinj4\DbExplorer\Models\Run;
 use TacticalNinj4\DbExplorer\Models\RunStatus;
 use TacticalNinj4\DbExplorer\Role;
@@ -32,7 +33,8 @@ use Throwable;
  *    trackBackend() first thing inside their transaction, then shouldStop()
  *    between chunks or statements, throwing RunCancelled when it says so.
  * 4. Returning succeeds the run. RunCancelled, or a query cancelled (57014)
- *    after a cancel request, cancels it. Any other QueryFailed fails it with
+ *    after a cancel request, cancels it. RunFailed fails it with its own,
+ *    already redacted, message. Any other QueryFailed fails it with
  *    the audit-style error: SQLSTATE and first line, `meta.bindings` values
  *    redacted. Anything else fails it with a generic error and is rethrown,
  *    so the queue records and reports it.
@@ -93,6 +95,10 @@ trait TracksRun
             $this->process($run, $connection);
         } catch (RunCancelled) {
             $run->finish(RunStatus::CANCELLED);
+
+            return;
+        } catch (RunFailed $e) {
+            $run->finish(RunStatus::FAILED, $e->getMessage());
 
             return;
         } catch (QueryFailed $e) {

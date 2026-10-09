@@ -127,13 +127,36 @@ final class BackupTool
     }
 
     /**
-     * The first line of a failed dump's stderr, for the run's error.
+     * The first line of a failed dump's stderr, for the run's error, with
+     * the connection's host, port, login, database and password redacted
+     * (libpq quotes them in connection errors).
      */
-    public static function describeFailure(Process $process): string
+    public function describeFailure(Process $process): string
     {
         $message = strtok(trim($process->getErrorOutput() ?: $process->getOutput()), "\n");
 
-        return $message === false ? 'pg_dump failed.' : 'pg_dump failed: '.$message;
+        if ($message === false) {
+            return 'pg_dump failed.';
+        }
+
+        $secrets = [];
+
+        foreach (['password', 'host', 'username', 'database', 'port'] as $key) {
+            $value = $this->connection->getConfig($key);
+
+            if ((is_string($value) || is_int($value)) && (string) $value !== '') {
+                $secrets[(string) $value] = strlen((string) $value);
+            }
+        }
+
+        // Longest first, so a value inside another is never left half shown.
+        arsort($secrets);
+
+        foreach (array_keys($secrets) as $secret) {
+            $message = str_replace((string) $secret, '[redacted]', $message);
+        }
+
+        return 'pg_dump failed: '.$message;
     }
 
     /**
