@@ -6,6 +6,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Testing\TestResponse;
 use TacticalNinj4\DbExplorer\Facades\DbExplorer;
+use TacticalNinj4\DbExplorer\Http\Controllers\ImportController;
 use TacticalNinj4\DbExplorer\Jobs\Import;
 use TacticalNinj4\DbExplorer\Models\Run;
 use TacticalNinj4\DbExplorer\Tests\TestCase;
@@ -95,6 +96,29 @@ it('rejects another user\'s token, a malformed token, and a missing file', funct
 
     importAs($this, '/preview', ['token' => '../evil'])->assertStatus(422);
     importAs($this, '/preview', ['token' => '1-'.str_repeat('c', 40)])->assertStatus(422);
+});
+
+it('accepts CSV whatever name the server\'s libmagic gives it (application/csv on PHP 8.0)', function (string $contents) {
+    $file = csvFile($contents);
+    $sniffed = (new finfo(FILEINFO_MIME_TYPE))->file($file->getPathname());
+
+    expect(ImportController::CSV_MIME_TYPES)->toContain($sniffed);
+
+    importAs($this, '', ['file' => $file])->assertStatus(201);
+})->with([
+    'one column' => ["a\n1"],
+    'several columns' => ["a,b\n1,x\n2,y\n3,z\n"],
+    'quoted' => ["name,note\nAlice,first\nBob,\"second, quoted\"\n"],
+]);
+
+it('rejects a real binary spreadsheet named .csv', function () {
+    // An OLE2 (.xls) header: finfo calls it application/vnd.ms-excel or CDF, never CSV.
+    $xls = tempnam(sys_get_temp_dir(), 'dbx-xls');
+    file_put_contents($xls, "\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1".str_repeat("\x00", 504));
+
+    importAs($this, '', ['file' => new UploadedFile($xls, 'upload.csv', 'text/csv', null, true)])
+        ->assertStatus(422)
+        ->assertJsonValidationErrors('file');
 });
 
 it('rejects uploads that are not plain text csv, or oversized', function () {

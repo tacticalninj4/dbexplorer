@@ -28,9 +28,19 @@ class ImportController
     public const PREVIEW_ROWS = 20;
 
     /**
-     * Store `file` and return its token. Only text/csv and text/plain are
-     * accepted, capped at limits.import.max_upload_kb; nothing is parsed
-     * into the database here.
+     * What the server's content sniffing (finfo, not the browser's claim)
+     * may call a CSV upload. libmagic names CSV text differently across
+     * versions: text/csv on current ones, application/csv on the one PHP
+     * 8.0 bundles, text/plain when it can't tell, text/x-csv on some
+     * distributions. application/vnd.ms-excel is left out on purpose: finfo
+     * never says it for text, only for real binary .xls files.
+     */
+    public const CSV_MIME_TYPES = ['text/csv', 'text/plain', 'application/csv', 'text/x-csv'];
+
+    /**
+     * Store `file` and return its token. Only content sniffed as CSV or
+     * plain text ({@see CSV_MIME_TYPES}) is accepted, capped at
+     * limits.import.max_upload_kb; nothing is parsed into the database here.
      */
     public function upload(Request $request): JsonResponse
     {
@@ -39,7 +49,7 @@ class ImportController
         $maxKb = (int) config('dbexplorer.limits.import.max_upload_kb', 51200);
 
         $request->validate([
-            'file' => ['required', 'file', 'max:'.($maxKb), 'mimetypes:text/csv,text/plain'],
+            'file' => ['required', 'file', 'max:'.($maxKb), 'mimetypes:'.implode(',', self::CSV_MIME_TYPES)],
         ]);
 
         $file = $request->file('file');
