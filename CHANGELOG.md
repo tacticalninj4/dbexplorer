@@ -2,6 +2,13 @@
 
 ## [Unreleased](https://github.com/tacticalninj4/dbexplorer/compare/v1.0.0...1.x)
 
+### Security
+- Scheduled queries run an approved snapshot of their SQL, as the approving admin, in a read-only transaction unless the approval allowed writes (`allow_writes`) or DDL (`allow_ddl`, both needing a password confirmation). Editing a shared saved query after it was scheduled no longer changes what runs as admin. New `POST api/{label}/schedules/{id}/resync`. **Upgrading:** the migration disables existing schedules until an admin re-syncs them (docs/security.md §6).
+- The audit log viewer shows only rows from labels where the user is admin.
+
+### Fixed
+- A scheduled query's lock is released when its run ends, so it runs again on the next due tick (it waited for the background timeout before).
+
 
 ## [v1.0.0](https://github.com/tacticalninj4/dbexplorer/compare/...v1.0.0) - 2026-10-09
 

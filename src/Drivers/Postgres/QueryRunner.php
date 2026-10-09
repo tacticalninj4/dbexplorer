@@ -109,9 +109,11 @@ final class QueryRunner
      *   falls back to the connection name as label.
      * - `history`: false skips the query history row, e.g. for data grid
      *   fetches the user didn't type. The run is still audited.
+     * - `read_only`: true runs in `BEGIN READ ONLY` whatever the role, and
+     *   rolls back, e.g. for a scheduled query not approved for writes.
      *
      * @param  array<int|string, scalar|null>  $bindings  Positional values, bound in order, or named (`:name` keys) values
-     * @param  array{explain?: string|null, unmask?: bool, label?: string|null, user_id?: string|int|null, history?: bool}  $options
+     * @param  array{explain?: string|null, unmask?: bool, label?: string|null, user_id?: string|int|null, history?: bool, read_only?: bool}  $options
      *
      * @throws QueryFailed when the database rejects or fails the statement
      * @throws InvalidArgumentException for an unknown role, explain mode or binding type
@@ -138,7 +140,7 @@ final class QueryRunner
         $failure = null;
 
         try {
-            $result = $this->execute($connection, $sql, $bindings, $role, $timeout, $cap, $explain, (bool) ($options['unmask'] ?? false));
+            $result = $this->execute($connection, $sql, $bindings, $role, $timeout, $cap, $explain, (bool) ($options['unmask'] ?? false), ($options['read_only'] ?? false) === true);
         } catch (QueryFailed $e) {
             $failure = $e;
         }
@@ -519,7 +521,7 @@ final class QueryRunner
      * @param  array<int|string, scalar|null>  $bindings
      * @return array{columns: list<array{name: string, type: string, masked: bool}>, rows: list<list<mixed>>, affected: int|null, truncated: bool, notices: list<string>, noticesSupported: bool, committed: bool}
      */
-    private function execute(string $name, string $sql, array $bindings, string $role, int $timeout, int $cap, ?string $explain, bool $unmask): array
+    private function execute(string $name, string $sql, array $bindings, string $role, int $timeout, int $cap, ?string $explain, bool $unmask, bool $readOnly = false): array
     {
         $connection = $this->connection($name);
         $pdo = $this->pdo($connection);
@@ -536,7 +538,7 @@ final class QueryRunner
         $settings = $this->sessionSettings($pdo, $name);
 
         try {
-            return $this->transaction($connection, $pdo, $sql, $bindings, $role, $timeout, $cap, $explain, $unmask);
+            return $this->transaction($connection, $pdo, $sql, $bindings, $role, $timeout, $cap, $explain, $unmask, $readOnly);
         } finally {
             // The transaction's statements are gone by now, so DISCARD can't pull a live one away.
             $this->resetSession($pdo, $name, $settings);
@@ -549,9 +551,9 @@ final class QueryRunner
      * @param  array<int|string, scalar|null>  $bindings
      * @return array{columns: list<array{name: string, type: string, masked: bool}>, rows: list<list<mixed>>, affected: int|null, truncated: bool, notices: list<string>, noticesSupported: bool, committed: bool}
      */
-    private function transaction(Connection $connection, PDO $pdo, string $sql, array $bindings, string $role, int $timeout, int $cap, ?string $explain, bool $unmask): array
+    private function transaction(Connection $connection, PDO $pdo, string $sql, array $bindings, string $role, int $timeout, int $cap, ?string $explain, bool $unmask, bool $readOnly): array
     {
-        $readOnly = $role === Role::VIEWER;
+        $readOnly = $readOnly || $role === Role::VIEWER;
         $commit = ! $readOnly && $explain === null && $this->leadingKeyword($sql) !== 'EXPLAIN';
         $notices = [];
         $prefixLines = 0;
@@ -1023,7 +1025,7 @@ final class QueryRunner
      *
      * @param  'query'|'ddl'  $action
      * @param  array<int|string, scalar|null>  $bindings
-     * @param  array{explain?: string|null, unmask?: bool, label?: string|null, user_id?: string|int|null, history?: bool}  $options
+     * @param  array{explain?: string|null, unmask?: bool, label?: string|null, user_id?: string|int|null, history?: bool, read_only?: bool}  $options
      * @param  array{columns: list<array{name: string, type: string, masked: bool}>, rows: list<list<mixed>>, affected: int|null, truncated: bool, notices: list<string>, noticesSupported: bool, committed: bool}|null  $result
      * @param  array<string, mixed>  $meta  Extra audit meta
      */

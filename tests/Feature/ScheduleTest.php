@@ -5,8 +5,13 @@ declare(strict_types=1);
 use Illuminate\Console\Scheduling\Schedule as ConsoleSchedule;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Testing\TestResponse;
+use TacticalNinj4\DbExplorer\Console\ScheduleTickCommand;
+use TacticalNinj4\DbExplorer\Events\ScheduleFailed;
 use TacticalNinj4\DbExplorer\Facades\DbExplorer;
 use TacticalNinj4\DbExplorer\Jobs\RunScheduledQuery;
 use TacticalNinj4\DbExplorer\Models\AuditEntry;
@@ -42,6 +47,20 @@ function scheduledQuery(array $attributes = []): SavedQuery
 }
 
 /**
+ * A schedule for $saved (a new saved query by default), approved by user 1.
+ *
+ * @param  array<string, mixed>  $attributes
+ */
+function approvedSchedule(array $attributes = [], ?SavedQuery $saved = null): Schedule
+{
+    $schedule = (new Schedule($attributes + ['user_id' => '1', 'cron' => '* * * * *']))
+        ->approve($saved ?? scheduledQuery(), '1', false, false);
+    $schedule->save();
+
+    return $schedule;
+}
+
+/**
  * Call a schedules endpoint as $role (admin by default).
  *
  * @param  array<string, mixed>  $body
@@ -59,9 +78,10 @@ function schedulesAs(TestCase $test, string $method, string $uri, array $body = 
 it('dispatches a run for every due schedule, and only due ones', function () {
     Queue::fake();
 
-    $due = Schedule::query()->create(['saved_query_id' => scheduledQuery()->id, 'user_id' => '1', 'cron' => '* * * * *']);
-    $notDue = Schedule::query()->create(['saved_query_id' => scheduledQuery(['name' => 'Once a year'])->id, 'user_id' => '1', 'cron' => '0 0 1 1 *']);
-    $disabled = Schedule::query()->create(['saved_query_id' => scheduledQuery(['name' => 'Paused'])->id, 'user_id' => '1', 'cron' => '* * * * *', 'enabled' => false]);
+    // created by user 7, approved (and so run) by user 1
+    $due = approvedSchedule(['user_id' => '7']);
+    $notDue = approvedSchedule(['cron' => '0 0 1 1 *'], scheduledQuery(['name' => 'Once a year']));
+    $disabled = approvedSchedule(['enabled' => false], scheduledQuery(['name' => 'Paused']));
 
     DbExplorer::roleUsing(fn (): string => 'admin');
 
@@ -87,7 +107,7 @@ it('dispatches a run for every due schedule, and only due ones', function () {
 it('skips a schedule whose lock is still held', function () {
     Queue::fake();
 
-    $schedule = Schedule::query()->create(['saved_query_id' => scheduledQuery()->id, 'user_id' => '1', 'cron' => '* * * * *']);
+    $schedule = approvedSchedule();
     Cache::lock("dbx:schedule:{$schedule->id}", 60)->get();
 
     DbExplorer::roleUsing(fn (): string => 'admin');
@@ -99,26 +119,86 @@ it('skips a schedule whose lock is still held', function () {
         ->and($schedule->refresh()->last_run_at)->toBeNull();
 });
 
-it('disables and audits a schedule whose creator lost the admin role', function () {
+it('S17 fails, disables and audits a schedule whose approver lost the admin role, then fires ScheduleFailed', function () {
     Queue::fake();
 
-    $schedule = Schedule::query()->create(['saved_query_id' => scheduledQuery()->id, 'user_id' => '1', 'cron' => '* * * * *']);
+    $schedule = approvedSchedule();
+    $fired = [];
+
+    Event::listen(ScheduleFailed::class, function (ScheduleFailed $event) use (&$fired): void {
+        $fired[] = ['event' => $event, 'audits' => AuditEntry::query()->orderBy('id')->pluck('action')->all()];
+    });
 
     DbExplorer::roleUsing(fn (): ?string => null);
 
     Artisan::call('dbx:schedule:tick');
 
+    Queue::assertNotPushed(RunScheduledQuery::class);
+
+    $run = Run::query()->sole();
+
     expect($schedule->refresh()->enabled)->toBeFalse()
-        ->and(Run::query()->count())->toBe(0);
+        ->and($run->status)->toBe(RunStatus::FAILED)
+        ->and($run->user_id)->toBe('1')
+        ->and($run->error)->toBe(ScheduleTickCommand::DEMOTED);
+
+    $disabled = AuditEntry::query()->where('action', 'schedule.disabled')->sole();
+
+    expect($disabled->user_id)->toBe('1')
+        ->and($disabled->outcome)->toBe('error')
+        ->and($disabled->error)->toBe(ScheduleTickCommand::DEMOTED)
+        ->and($disabled->meta)->toEqual(['schedule_id' => $schedule->id, 'saved_query_id' => $schedule->saved_query_id, 'run_id' => $run->id]);
+
+    // fired once, after the run's and the schedule's audit rows were written
+    expect($fired)->toHaveCount(1)
+        ->and($fired[0]['audits'])->toBe(['run.failed', 'schedule.disabled'])
+        ->and(get_object_vars($fired[0]['event']))->toBe(['scheduleId' => $schedule->id, 'runId' => $run->id, 'error' => ScheduleTickCommand::DEMOTED]);
+});
+
+it('S11 disables a schedule without an approved SQL snapshot instead of running it', function () {
+    Queue::fake();
+    DbExplorer::roleUsing(fn (): string => 'admin');
+
+    $unapproved = Schedule::query()->create(['saved_query_id' => scheduledQuery()->id, 'user_id' => '1', 'cron' => '* * * * *']);
+    $tampered = approvedSchedule([], scheduledQuery(['name' => 'Tampered']));
+    Schedule::query()->whereKey($tampered->id)->update(['sql' => 'DROP TABLE fixture.posts']);
+
+    Artisan::call('dbx:schedule:tick');
 
     Queue::assertNotPushed(RunScheduledQuery::class);
 
-    $audit = AuditEntry::query()->sole();
+    expect(Run::query()->count())->toBe(0)
+        ->and($unapproved->refresh()->enabled)->toBeFalse()
+        ->and($tampered->refresh()->enabled)->toBeFalse()
+        ->and(AuditEntry::query()->where('action', 'schedule.disabled')->pluck('error')->all())
+        ->toBe([RunScheduledQuery::UNAPPROVED, RunScheduledQuery::UNAPPROVED]);
+});
 
-    expect($audit->action)->toBe('schedule.disabled')
-        ->and($audit->user_id)->toBe('1')
-        ->and($audit->outcome)->toBe('error')
-        ->and($audit->error)->toBe('The creator no longer has the admin role.');
+it('S11 backfills existing schedules from their saved query, unapproved and disabled', function () {
+    Schema::drop('dbx_schedules');
+    (require __DIR__.'/../../database/migrations/2026_10_09_000005_create_dbx_schedules_table.php')->up();
+
+    $saved = scheduledQuery(['params' => [['name' => 'max', 'type' => 'int', 'required' => false]]]);
+    DB::table('dbx_schedules')->insert(['saved_query_id' => $saved->id, 'user_id' => '1', 'cron' => '* * * * *', 'enabled' => true]);
+
+    (require __DIR__.'/../../database/migrations/2026_10_09_000006_add_sql_snapshot_to_dbx_schedules_table.php')->up();
+
+    $schedule = Schedule::query()->sole();
+
+    expect($schedule->sql)->toBe($saved->sql)
+        ->and($schedule->params)->toBe([['name' => 'max', 'type' => 'int', 'required' => false]])
+        ->and($schedule->sql_hash)->toBe(hash('sha256', $saved->sql))
+        ->and($schedule->enabled)->toBeFalse()
+        ->and($schedule->approved_by)->toBeNull()
+        ->and($schedule->approved_at)->toBeNull()
+        ->and($schedule->allow_writes)->toBeFalse()
+        ->and($schedule->allow_ddl)->toBeFalse()
+        ->and($schedule->isApproved())->toBeFalse();
+
+    // it can't be switched back on without an approval
+    schedulesAs($this, 'PATCH', "/{$schedule->id}", ['enabled' => true])
+        ->assertStatus(422)
+        ->assertJsonValidationErrors('enabled');
 });
 
 it('registers dbx:schedule:tick every minute', function () {
@@ -144,7 +224,19 @@ it('creates a schedule, and refuses invalid crons and required parameters', func
     ])->assertStatus(201)->json('data');
 
     expect($data['cron'])->toBe('*/5 * * * *')
-        ->and($data['notify'])->toBe(['on' => ['failure', 'threshold'], 'threshold_rows' => 1000, 'mail' => ['ops@example.com']]);
+        ->and($data['notify'])->toBe(['on' => ['failure', 'threshold'], 'threshold_rows' => 1000, 'mail' => ['ops@example.com']])
+        ->and($data['sql'])->toBe('SELECT count(*) FROM fixture.posts')
+        ->and($data['approved'])->toBeTrue()
+        ->and($data['approved_by'])->toBe('1')
+        ->and($data['allow_writes'])->toBeFalse()
+        ->and($data['allow_ddl'])->toBeFalse()
+        ->and($data['in_sync'])->toBeTrue();
+
+    $audit = AuditEntry::query()->where('action', 'schedule.created')->sole();
+
+    expect($audit->sql)->toBe('SELECT count(*) FROM fixture.posts')
+        ->and($audit->classification)->toBe('read')
+        ->and($audit->meta)->toEqual(['schedule_id' => $data['id'], 'saved_query_id' => $query->id, 'sql_hash' => hash('sha256', 'SELECT count(*) FROM fixture.posts'), 'allow_writes' => false, 'allow_ddl' => false]);
 
     schedulesAs($this, 'POST', '', ['saved_query_id' => $query->id, 'cron' => 'not a cron'])
         ->assertStatus(422)
@@ -164,7 +256,7 @@ it('creates a schedule, and refuses invalid crons and required parameters', func
 });
 
 it('pauses, resumes and deletes schedules', function () {
-    $schedule = Schedule::query()->create(['saved_query_id' => scheduledQuery()->id, 'user_id' => '1', 'cron' => '* * * * *']);
+    $schedule = approvedSchedule();
 
     schedulesAs($this, 'PATCH', "/{$schedule->id}", ['enabled' => false])->assertOk()->assertJsonPath('data.enabled', false);
 
@@ -173,4 +265,102 @@ it('pauses, resumes and deletes schedules', function () {
     schedulesAs($this, 'DELETE', "/{$schedule->id}")->assertNoContent();
 
     expect(Schedule::query()->count())->toBe(0);
+});
+
+it('S11 snapshots the SQL: editing or hiding the saved query later does not change the schedule', function () {
+    // user 2, a viewer, shares a SELECT; user 1, an admin, schedules it
+    $shared = scheduledQuery(['user_id' => '2', 'visibility' => 'shared']);
+
+    $id = schedulesAs($this, 'POST', '', ['saved_query_id' => $shared->id, 'cron' => '* * * * *'])->assertStatus(201)->json('data.id');
+
+    DbExplorer::roleUsing(fn (): string => 'viewer');
+
+    $this->actingAs(makeUser(2))
+        ->withSession(['_token' => 'csrf-test-token'])
+        ->withHeaders(['X-CSRF-TOKEN' => 'csrf-test-token'])
+        ->patchJson("/dbexplorer/api/main/queries/{$shared->id}", ['sql' => 'DROP TABLE fixture.posts', 'visibility' => 'private'])
+        ->assertOk();
+
+    $schedule = Schedule::query()->findOrFail($id);
+
+    expect($schedule->sql)->toBe('SELECT count(*) FROM fixture.posts')
+        ->and($schedule->isApproved())->toBeTrue()
+        ->and(schedulesAs($this, 'GET', '')->json('data.0.in_sync'))->toBeFalse();
+
+    // the admin can no longer see the now-private query, so can't re-sync it
+    schedulesAs($this, 'POST', "/{$id}/resync")->assertNotFound();
+
+    expect($schedule->refresh()->sql)->toBe('SELECT count(*) FROM fixture.posts');
+});
+
+it('S11 asks for allow_writes for write SQL and allow_ddl for DDL before scheduling it', function () {
+    $dml = scheduledQuery(['name' => 'Cleanup', 'sql' => 'DELETE FROM fixture.posts WHERE id < 0']);
+    $ddl = scheduledQuery(['name' => 'Rebuild', 'sql' => 'DROP TABLE fixture.posts']);
+
+    schedulesAs($this, 'POST', '', ['saved_query_id' => $dml->id, 'cron' => '* * * * *'])
+        ->assertStatus(422)
+        ->assertJsonValidationErrors('allow_writes');
+
+    schedulesAs($this, 'POST', '', ['saved_query_id' => $ddl->id, 'cron' => '* * * * *', 'allow_writes' => true])
+        ->assertStatus(422)
+        ->assertJsonValidationErrors('allow_ddl');
+
+    expect(Schedule::query()->count())->toBe(0);
+});
+
+it('S5 approving writes or DDL for a schedule needs a recent password confirmation', function () {
+    $dml = scheduledQuery(['name' => 'Cleanup', 'sql' => 'DELETE FROM fixture.posts WHERE id < 0']);
+
+    schedulesAs($this, 'POST', '', ['saved_query_id' => $dml->id, 'cron' => '* * * * *', 'allow_writes' => true])
+        ->assertStatus(423);
+
+    schedulesAs($this, 'POST', '', ['saved_query_id' => scheduledQuery()->id, 'cron' => '* * * * *', 'allow_ddl' => true])
+        ->assertStatus(423);
+
+    expect(Schedule::query()->count())->toBe(0);
+
+    $this->withSession(['auth.password_confirmed_at' => time()]);
+
+    $data = schedulesAs($this, 'POST', '', ['saved_query_id' => $dml->id, 'cron' => '* * * * *', 'allow_writes' => true])
+        ->assertStatus(201)
+        ->json('data');
+
+    expect($data['allow_writes'])->toBeTrue()
+        ->and($data['allow_ddl'])->toBeFalse();
+});
+
+it('S17 re-syncs a schedule from its saved query for admins only, re-approved by them and audited', function () {
+    $saved = scheduledQuery(['user_id' => '2', 'visibility' => 'shared']);
+    $schedule = (new Schedule(['user_id' => '1', 'cron' => '* * * * *']))->approve($saved, '5', false, false);
+    $schedule->save();
+
+    $saved->update(['sql' => 'SELECT count(*) FROM fixture.users']);
+
+    schedulesAs($this, 'POST', "/{$schedule->id}/resync", [], 'editor')->assertForbidden();
+    schedulesAs($this, 'POST', "/{$schedule->id}/resync", [], 'viewer')->assertForbidden();
+
+    expect($schedule->refresh()->sql)->toBe('SELECT count(*) FROM fixture.posts');
+
+    $data = schedulesAs($this, 'POST', "/{$schedule->id}/resync")->assertOk()->json('data');
+
+    expect($data['sql'])->toBe('SELECT count(*) FROM fixture.users')
+        ->and($data['approved_by'])->toBe('1')
+        ->and($data['in_sync'])->toBeTrue()
+        ->and($schedule->refresh()->sql_hash)->toBe(hash('sha256', 'SELECT count(*) FROM fixture.users'));
+
+    $audit = AuditEntry::query()->where('action', 'schedule.resynced')->sole();
+
+    expect($audit->user_id)->toBe('1')
+        ->and($audit->label)->toBe('main')
+        ->and($audit->role)->toBe('admin')
+        ->and($audit->sql)->toBe('SELECT count(*) FROM fixture.users')
+        ->and($audit->meta['schedule_id'])->toBe($schedule->id);
+
+    // re-syncing to write SQL asks for allow_writes, and then for the password
+    $saved->update(['sql' => 'DELETE FROM fixture.posts WHERE id < 0']);
+
+    schedulesAs($this, 'POST', "/{$schedule->id}/resync")->assertStatus(422)->assertJsonValidationErrors('allow_writes');
+    schedulesAs($this, 'POST', "/{$schedule->id}/resync", ['allow_writes' => true])->assertStatus(423);
+
+    expect($schedule->refresh()->sql)->toBe('SELECT count(*) FROM fixture.users');
 });

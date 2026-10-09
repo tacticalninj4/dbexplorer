@@ -28,18 +28,14 @@ final class ScheduledQueryFinished extends Notification
     }
 
     /**
-     * @param  mixed  $notifiable
      * @return array<int, string>
      */
-    public function via($notifiable): array
+    public function via(mixed $notifiable): array
     {
         return ['mail'];
     }
 
-    /**
-     * @param  mixed  $notifiable
-     */
-    public function toMail($notifiable): MailMessage
+    public function toMail(mixed $notifiable): MailMessage
     {
         $failed = $this->status === 'failed';
 

@@ -194,6 +194,7 @@ Each `dbx_audit_log` row stores `hash = HMAC-SHA256(key, prev_hash . canonical_j
 - **Verify on a schedule.** `php artisan dbx:audit:verify` recomputes the chain and exits non-zero at the first edited, deleted or reordered row. Run it daily and alert on failure.
 - **Prune on a schedule.** `php artisan dbx:prune` deletes rows older than `audit.retention_days` (90 by default). It first writes a `pruned` checkpoint, so verification still passes afterwards.
 - **Forward entries.** Set `audit.log_channel` to a channel that leaves the box (syslog, a SIEM) to cover tail truncation.
+- **The viewer is per label.** `GET api/{label}/audit` needs the admin role on `{label}`, and shows only rows from labels where the user is admin. Rows without a label (password confirmations) show only to a user who is admin on every configured label. A `label` filter outside that set gives an empty page.
 - **Set a dedicated key.** Rotating `APP_KEY` would otherwise break verification of every existing row.
 
 **Rotating the audit key** breaks verification of every row signed with the old key; rows aren't re-signed. To rotate:
@@ -204,7 +205,18 @@ Each `dbx_audit_log` row stores `hash = HMAC-SHA256(key, prev_hash . canonical_j
 4. Start a new chain: `DELETE FROM dbx_audit_log; UPDATE dbx_audit_head SET hash = NULL WHERE id = 1;`
 5. Set the new `DBEXPLORER_AUDIT_KEY`, clear the config cache, run `dbx:audit:verify` (0 entries), and re-enable DbExplorer.
 
-## 6. Backups
+## 6. Scheduled queries
+
+A schedule runs unattended as an admin, so it never runs SQL an admin didn't approve.
+
+- **Snapshot, not a reference.** Creating a schedule (`POST api/{label}/schedules`) copies the saved query's SQL and parameter definitions into the schedule, with its SHA-256 (`sql_hash`), and records the approving admin (`approved_by`, `approved_at`). Later edits to the saved query, or making it private, change nothing: the schedule's `in_sync` turns false, and the job runs the snapshot. `saved_query_id` is provenance only.
+- **Re-sync is a fresh approval.** `POST api/{label}/schedules/{id}/resync` (admins only) copies the saved query's current SQL again — only if the admin can still see it, own or shared, else 404 — and records them as the approver. Both creating and re-syncing are audited (`schedule.created`, `schedule.resynced`) with the approved SQL, its hash and the permissions granted.
+- **Runs as the approver.** Each tick and each job re-resolves the approver's role on the label. If it isn't `admin` any more, the run fails, the schedule is disabled (audited as `schedule.disabled`) and `ScheduleFailed` fires. A snapshot that is missing, unapproved or doesn't match its hash is disabled the same way and never runs.
+- **Read-only unless approved for writes.** A schedule's statement runs in `BEGIN READ ONLY`, so even a write the classifier misses (a volatile function, `nextval()`) fails at the database. `allow_writes` lets it run in a read-write transaction; DDL also needs `allow_ddl` (which implies `allow_writes`). Both are set only when approving: SQL the classifier calls DML or destructive is refused without `allow_writes` (422), DDL without `allow_ddl` (422), and granting either needs a recent password confirmation (423, S5). Nobody confirms at run time — there is no one there.
+- **Upgrading from 1.0.0.** The migration copies each existing schedule's current saved-query SQL into it but leaves it **unapproved and disabled**: the SQL may have been edited by someone else since it was scheduled. Review each one, re-sync it, then enable it (`PATCH … {"enabled": true}` is refused until it is approved).
+- **ScheduleFailed** carries the schedule id, run id and the audit-style error (SQLSTATE and primary message), never SQL, bound values or connection config, and fires after the run's audit row. A failed run doesn't disable the schedule: the job releases the schedule's lock when it ends, so the next due tick runs it again.
+
+## 7. Backups
 
 Backups run `pg_dump` through Symfony Process as an **argument array** — never a shell string — and the password reaches it only through the `PGPASSWORD` environment variable, never on the command line where `ps` or an error log would show it. A dump is stored on the private disk configured at `backup.disk`, downloadable by its run's owner through the same short-lived signed URL as any run result.
 
@@ -216,6 +228,6 @@ pg_restore --host ... --username ... --dbname <target database> --clean --if-exi
 
 Point `pg_restore` at a database *you* choose (a copy first, the real one after checking it), with a login *you* control. The dump's `pg_restore --list` shows what it contains before you commit to anything.
 
-## 7. Reporting a vulnerability
+## 8. Reporting a vulnerability
 
 Please don't open a public issue. Follow [the security policy](../.github/SECURITY.md).
