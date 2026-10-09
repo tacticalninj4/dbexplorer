@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace TacticalNinj4\DbExplorer\Exceptions;
 
+use Illuminate\Http\JsonResponse;
 use PDOException;
 use RuntimeException;
 
@@ -29,6 +30,27 @@ class QueryFailed extends RuntimeException
         public ?int $auditId = null,
     ) {
         parent::__construct($message);
+    }
+
+    /**
+     * The API answer: 422 with the message, SQLSTATE and position, nothing else.
+     * A hidden relation (HiddenObjectReferenced) renders exactly like a missing one.
+     */
+    public function render(): JsonResponse
+    {
+        return new JsonResponse(['error' => [
+            'message' => $this->getMessage(),
+            'sqlstate' => $this->sqlState,
+            'position' => $this->position,
+        ]], 422);
+    }
+
+    /**
+     * The QueryRunner already wrote it to the audit log; it isn't an app error.
+     */
+    public function report(): bool
+    {
+        return true;
     }
 
     /**

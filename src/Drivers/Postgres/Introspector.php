@@ -199,6 +199,93 @@ class Introspector
     }
 
     /**
+     * One relation or type by name, as objects() lists it. Functions and
+     * procedures are looked up by signature through functionDefinition().
+     *
+     * @return ObjectRow
+     *
+     * @throws ObjectNotFoundException when it is missing, hidden or not accessible
+     */
+    public function object(string $schema, string $name): array
+    {
+        $this->guardName($name);
+
+        $oid = $this->schemaOid($schema);
+
+        $objects = $this->objectRows(
+            self::OBJECTS.' WHERE o.schema_oid = ? AND o.name = ? AND o.signature IS NULL ORDER BY o.kind LIMIT 1',
+            [$oid, $name],
+        );
+
+        if ($objects === []) {
+            throw new ObjectNotFoundException;
+        }
+
+        return $objects[0];
+    }
+
+    /**
+     * What the rows endpoint needs to page through a table, view,
+     * materialized view or foreign table:
+     *
+     * - `columns`: the columns the login can SELECT, in order. A column
+     *   REVOKE leaves the others browsable.
+     * - `key`: the columns of the primary key or, failing that, of the
+     *   narrowest unique index whose columns are all NOT NULL and selectable
+     *   (no partial or expression indexes, nor deferrable constraints).
+     *   Null when there is none, e.g. for views.
+     * - `ctid`: whether rows have a ctid (plain tables, partitions and
+     *   materialized views), which gives offset pages a stable order.
+     * - `estimated_rows`: as stats() reports it; null for views and foreign tables.
+     *
+     * @return array{type: string, columns: list<array{name: string, type: string, nullable: bool}>, key: list<string>|null, ctid: bool, estimated_rows: int|null}
+     *
+     * @throws ObjectNotFoundException
+     */
+    public function rowSource(string $schema, string $name): array
+    {
+        $relation = $this->relation($schema, $name, ['r', 'p', 'v', 'm', 'f']);
+
+        $columns = array_map(fn (array $row): array => [
+            'name' => (string) $row['name'],
+            'type' => (string) $row['type'],
+            'nullable' => (bool) $row['nullable'],
+        ], $this->select(
+            'SELECT a.attname AS name, format_type(a.atttypid, a.atttypmod) AS type, NOT a.attnotnull AS nullable
+            FROM pg_attribute a
+            WHERE a.attrelid = ? AND a.attnum > 0 AND NOT a.attisdropped AND has_column_privilege(a.attrelid, a.attnum, \'SELECT\')
+            ORDER BY a.attnum',
+            [$relation['oid']],
+        ));
+
+        // indkey lists the key columns first, then any INCLUDE columns.
+        $key = $this->selectValue(
+            'SELECT (SELECT json_agg(a.attname ORDER BY k.ord)::text FROM unnest(i.indkey::int2[]) WITH ORDINALITY k(attnum, ord)
+                    JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum WHERE k.ord <= i.indnkeyatts)
+            FROM pg_index i
+            WHERE i.indrelid = ? AND i.indisunique AND i.indisvalid AND i.indimmediate AND i.indpred IS NULL AND i.indexprs IS NULL
+                AND NOT EXISTS (
+                    SELECT 1 FROM unnest(i.indkey::int2[]) WITH ORDINALITY k(attnum, ord)
+                    JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
+                    WHERE k.ord <= i.indnkeyatts AND (NOT a.attnotnull OR NOT has_column_privilege(a.attrelid, a.attnum, \'SELECT\'))
+                )
+            ORDER BY i.indisprimary DESC, i.indnkeyatts, i.indexrelid
+            LIMIT 1',
+            [$relation['oid']],
+        );
+
+        $kind = $relation['kind'];
+
+        return [
+            'type' => self::RELATION_TYPES[$kind] ?? $kind,
+            'columns' => $columns,
+            'key' => $key === null ? null : self::jsonList($key),
+            'ctid' => in_array($kind, ['r', 'm'], true),
+            'estimated_rows' => in_array($kind, ['r', 'p', 'm'], true) ? $this->stats($schema, $name)['estimated_rows'] : null,
+        ];
+    }
+
+    /**
      * Visible objects whose name contains $term, case-insensitively, across
      * every visible schema. Exact matches come first, then earlier matches.
      *
