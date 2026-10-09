@@ -13,6 +13,7 @@ use TacticalNinj4\DbExplorer\Http\Controllers\QueryController;
 use TacticalNinj4\DbExplorer\Http\Controllers\RowsController;
 use TacticalNinj4\DbExplorer\Http\Controllers\RowWriteController;
 use TacticalNinj4\DbExplorer\Http\Controllers\RunsController;
+use TacticalNinj4\DbExplorer\Http\Controllers\ScriptController;
 use TacticalNinj4\DbExplorer\Http\Controllers\ShellController;
 
 // Loaded by DbExplorerServiceProvider inside the configured domain, prefix and
@@ -55,6 +56,7 @@ Route::prefix('api/{label}')->middleware('throttle:dbexplorer')->group(function 
     Route::get('runs', [RunsController::class, 'index'])->name('runs');
     Route::get('runs/{run}', [RunsController::class, 'show'])->name('runs.show');
     Route::post('runs/{run}/cancel', [RunsController::class, 'cancel'])->name('runs.cancel');
+    Route::post('script', ScriptController::class)->name('script');
 });
 
 Route::get('assets/{path}', AssetController::class)->where('path', '.+')->name('asset');

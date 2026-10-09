@@ -133,22 +133,28 @@ trait TracksRun
     }
 
     /**
-     * Call first inside the job's transaction (QueryRunner::atomic()) with its
-     * `$statement`: stores the session's `pg_backend_pid()` so a cancel can
-     * reach it, raises the statement timeout to limits.background.timeout, and
-     * stops if a cancel arrived before the pid was stored.
+     * Call first with the runner's `$statement`, inside the job's transaction
+     * (QueryRunner::atomic()): stores the session's `pg_backend_pid()` so a
+     * cancel can reach it, raises the statement timeout to
+     * limits.background.timeout, and stops if a cancel arrived before the pid
+     * was stored.
+     *
+     * With `$transactional` false, for statements that auto-commit
+     * (QueryRunner::autoCommit(), e.g. CREATE INDEX CONCURRENTLY), the timeout
+     * is raised session-wide instead of with SET LOCAL, which no transaction
+     * is open to scope.
      *
      * @param  Closure(string, array<int, scalar|null>): array{columns: list<string>, rows: list<list<mixed>>, affected: int}  $statement
      *
      * @throws RunCancelled
      */
-    protected function trackBackend(Closure $statement): void
+    protected function trackBackend(Closure $statement, bool $transactional = true): void
     {
         $pid = $statement('SELECT pg_backend_pid()', [])['rows'][0][0] ?? null;
 
         Run::query()->whereKey($this->runId)->update(['pid' => is_numeric($pid) ? (int) $pid : null]);
 
-        $statement("SELECT set_config('statement_timeout', ?, true)", [(string) ($this->timeout * 1000)]);
+        $statement("SELECT set_config('statement_timeout', ?, ".($transactional ? 'true' : 'false').')', [(string) ($this->timeout * 1000)]);
 
         if ($this->shouldStop()) {
             throw new RunCancelled;

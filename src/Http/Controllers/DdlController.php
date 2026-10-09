@@ -12,6 +12,8 @@ use TacticalNinj4\DbExplorer\Drivers\Postgres\DdlBuilder;
 use TacticalNinj4\DbExplorer\Drivers\Postgres\QueryRunner;
 use TacticalNinj4\DbExplorer\Exceptions\QueryFailed;
 use TacticalNinj4\DbExplorer\Http\Middleware\ResolveRole;
+use TacticalNinj4\DbExplorer\Jobs\RunScript;
+use TacticalNinj4\DbExplorer\Models\Run;
 use TacticalNinj4\DbExplorer\Role;
 use TacticalNinj4\DbExplorer\Security\PasswordConfirmation;
 
@@ -44,9 +46,11 @@ class DdlController
      * Build `op` and run its statements in one transaction through the
      * QueryRunner (role timeout, hidden-object check, audit, session reset).
      * Destructive statements need a recent password confirmation (S5, else
-     * 423). A statement that can't run in a transaction (CONCURRENTLY) is a
-     * 409 until background runs exist (M3). A database error is a 422 with the
-     * failing statement's index; nothing was applied.
+     * 423). A statement that can't run in a transaction (CREATE or DROP INDEX
+     * CONCURRENTLY, REFRESH MATERIALIZED VIEW CONCURRENTLY) is queued instead
+     * as a step-mode script run (202, M3.5) and runs outside any transaction.
+     * A database error is a 422 with the failing statement's index; nothing
+     * was applied.
      *
      * @throws ValidationException
      * @throws QueryFailed
@@ -55,12 +59,20 @@ class DdlController
     {
         $statements = $this->builder($request, $db)->build($this->operation($request));
 
-        foreach ($statements as $statement) {
-            abort_unless($statement['transactional'], 409, 'This operation cannot run in a transaction and needs a background job, which is not available yet.');
-        }
-
         if (in_array(DdlBuilder::DESTRUCTIVE, array_column($statements, 'classification'), true)) {
             $confirmation->ensureConfirmed($request);
+        }
+
+        if (in_array(false, array_column($statements, 'transactional'), true)) {
+            $run = Run::queueFor($request, RunScript::TYPE, [
+                'sql' => implode(";\n", array_column($statements, 'sql')),
+                'mode' => RunScript::STEP,
+                'source' => 'ddl',
+            ]);
+
+            RunScript::dispatch($run->id);
+
+            return new JsonResponse(['data' => ['statements' => $statements, 'run' => $run->toApi()]], 202);
         }
 
         $result = $runner->runStatements(
