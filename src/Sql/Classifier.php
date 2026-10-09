@@ -27,6 +27,9 @@ namespace TacticalNinj4\DbExplorer\Sql;
  *
  * `EXPLAIN ANALYZE` runs its statement, so it takes that statement's class. `WITH`
  * takes the most severe class of its CTE bodies and main statement.
+ *
+ * isDdl() splits destructive into DDL (DROP, TRUNCATE, ALTER … DROP) and DML
+ * (UPDATE or DELETE without WHERE, also inside a CTE).
  */
 final class Classifier
 {
@@ -53,6 +56,41 @@ final class Classifier
     public static function classify(string $sql): string
     {
         return self::combine(array_column(self::statements($sql), 'class'));
+    }
+
+    /**
+     * Whether any statement is ddl, or destructive DDL: DROP, TRUNCATE or
+     * ALTER … DROP, as opposed to UPDATE or DELETE without WHERE. UX only, like classify().
+     */
+    public static function isDdl(string $sql): bool
+    {
+        foreach (self::statements($sql) as $statement) {
+            if ($statement['class'] === self::DDL) {
+                return true;
+            }
+
+            if ($statement['class'] === self::DESTRUCTIVE && in_array(self::command($statement['sql']), ['DROP', 'TRUNCATE', 'ALTER'], true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The statement's first keyword, upper-cased, past any opening parens.
+     */
+    private static function command(string $sql): string
+    {
+        foreach (Lexer::tokens($sql) as $token) {
+            if (Lexer::isTrivia($token) || $token['type'] === Lexer::OPEN_PAREN) {
+                continue;
+            }
+
+            return $token['type'] === Lexer::WORD ? strtoupper($token['text']) : '';
+        }
+
+        return '';
     }
 
     /**

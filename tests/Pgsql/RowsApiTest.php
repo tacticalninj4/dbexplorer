@@ -8,6 +8,7 @@ use TacticalNinj4\DbExplorer\Drivers\Postgres\Introspector;
 use TacticalNinj4\DbExplorer\Drivers\Postgres\RowsQuery;
 use TacticalNinj4\DbExplorer\Facades\DbExplorer;
 use TacticalNinj4\DbExplorer\Models\AuditEntry;
+use TacticalNinj4\DbExplorer\Models\QueryHistory;
 use TacticalNinj4\DbExplorer\Security\Masker;
 use TacticalNinj4\DbExplorer\Tests\PgsqlTestCase;
 
@@ -348,12 +349,13 @@ it('pages a table without a key through the API by offset', function () {
         ->and(array_merge(array_column($first['rows'], 1), array_column($second['rows'], 1)))->toBe(range(1, 10));
 });
 
-it('S17 audits each row query and counts exactly on request', function () {
+it('S17 audits each row query and counts exactly on request, keeping both out of the query history', function () {
     $data = rowsApi($this, 'fixture/big?limit=5&exact=1&filters[0][column]=n&filters[0][op]==&filters[0][value]=7');
 
     $entries = AuditEntry::query()->where('action', 'query')->orderBy('id')->get();
 
     expect($data['count'])->toBe(['value' => 1000, 'exact' => true])
+        ->and(QueryHistory::query()->count())->toBe(0)
         ->and($entries)->toHaveCount(2)
         ->and($entries->pluck('label')->all())->toBe(['main', 'main'])
         ->and($entries->pluck('role')->all())->toBe(['viewer', 'viewer'])

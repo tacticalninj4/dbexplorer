@@ -6,6 +6,7 @@ use Illuminate\Routing\Middleware\ThrottleRequests;
 use Illuminate\Support\Facades\Route;
 use TacticalNinj4\DbExplorer\Http\Controllers\AssetController;
 use TacticalNinj4\DbExplorer\Http\Controllers\ConfirmPasswordController;
+use TacticalNinj4\DbExplorer\Http\Controllers\DdlController;
 use TacticalNinj4\DbExplorer\Http\Controllers\MeController;
 use TacticalNinj4\DbExplorer\Http\Controllers\ObjectsController;
 use TacticalNinj4\DbExplorer\Http\Controllers\QueryController;
@@ -48,6 +49,8 @@ Route::prefix('api/{label}')->middleware('throttle:dbexplorer')->group(function 
     Route::delete('rows/{schema}/{name}', [RowWriteController::class, 'delete'])->name('rows.delete');
     Route::post('query', [QueryController::class, 'run'])->name('query');
     Route::get('history', [QueryController::class, 'history'])->name('history');
+    Route::post('ddl/preview', [DdlController::class, 'preview'])->name('ddl.preview');
+    Route::post('ddl/execute', [DdlController::class, 'execute'])->name('ddl.execute');
 });
 
 Route::get('assets/{path}', AssetController::class)->where('path', '.+')->name('asset');
