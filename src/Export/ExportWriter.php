@@ -7,6 +7,7 @@ namespace TacticalNinj4\DbExplorer\Export;
 use Closure;
 use InvalidArgumentException;
 use RuntimeException;
+use TacticalNinj4\DbExplorer\Drivers\Postgres\RowsQuery;
 
 /**
  * Writes a streamed query result to a file, format by format (PRD §7.6).
@@ -20,7 +21,8 @@ use RuntimeException;
  * booleans become t/f (csv) or TRUE/FALSE (sql), arrays and other non-scalars
  * become JSON. Anything string-shaped goes through the `$quote` callback —
  * the caller passes the connection's PDO::quote — so SQL INSERT output can't
- * be broken by quotes or escapes in the data.
+ * be broken by quotes or escapes in the data. Table and column names are
+ * quoted identifiers, `"` doubled (S12), whatever characters they hold.
  */
 final class ExportWriter
 {
@@ -175,10 +177,10 @@ final class ExportWriter
     {
         $table = $this->table;
 
-        $names = implode(', ', array_map(fn (array $column): string => '"'.$column['name'].'"', $columns));
+        $names = implode(', ', array_map(fn (array $column): string => RowsQuery::quoteIdentifier($column['name']), $columns));
         $values = implode(', ', array_map([$this, 'literal'], $row));
 
-        $this->raw('INSERT INTO "'.$table['schema'].'"."'.$table['name'].'" ('.$names.') VALUES ('.$values.");\n");
+        $this->raw('INSERT INTO '.RowsQuery::quoteIdentifier($table['schema']).'.'.RowsQuery::quoteIdentifier($table['name']).' ('.$names.') VALUES ('.$values.");\n");
     }
 
     /**

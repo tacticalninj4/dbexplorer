@@ -9,7 +9,6 @@ use TacticalNinj4\DbExplorer\Facades\DbExplorer;
 use TacticalNinj4\DbExplorer\Jobs\Export;
 use TacticalNinj4\DbExplorer\Jobs\RunQuery;
 use TacticalNinj4\DbExplorer\Models\Run;
-use TacticalNinj4\DbExplorer\Models\RunStatus;
 use TacticalNinj4\DbExplorer\Tests\TestCase;
 
 // M3.2: POST api/{label}/export and the query API's background flag. The
@@ -41,28 +40,6 @@ function exportAs(TestCase $test, array $body, string $role = 'viewer', int $use
         ->withHeaders(['X-CSRF-TOKEN' => 'csrf-test-token'])
         ->postJson('/dbexplorer/api/main/export', $body);
 }
-
-it('queues a table export for a viewer (D4), with the query only in the run row', function () {
-    Queue::fake();
-
-    $run = exportAs($this, ['table' => ['schema' => 'fixture', 'name' => 'users']])->assertStatus(202)->json('data');
-
-    expect($run['type'])->toBe(Export::TYPE)
-        ->and($run['status'])->toBe(RunStatus::QUEUED);
-
-    $model = Run::query()->sole();
-
-    expect($model->only(['user_id', 'label', 'role']))->toBe(['user_id' => '1', 'label' => 'main', 'role' => 'viewer'])
-        ->and($model->meta['sql'])->toBe('SELECT * FROM "fixture"."users"')
-        ->and($model->meta['format'])->toBe(ExportWriter::CSV)
-        ->and($model->meta['table'])->toBe(['schema' => 'fixture', 'name' => 'users']);
-
-    Queue::assertPushed(Export::class, function (Export $job) use ($model): bool {
-        return $job->runId === $model->id
-            && ! str_contains(serialize($job), 'fixture')
-            && ! str_contains(serialize($job), 'pgsql');
-    });
-});
 
 it('queues a query export with its bindings and format', function () {
     Queue::fake();

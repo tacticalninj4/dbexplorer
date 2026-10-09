@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\Process\Process;
@@ -211,4 +212,94 @@ it('cancels a running export through a real queue worker, storing no file', func
         ->and($run->result_path)->toBeNull()
         ->and($run->toApi()['result_available'])->toBeFalse()
         ->and(Storage::disk('local')->exists('exports/run-'.$run->id.'.jsonl'))->toBeFalse();
+});
+
+it('queues a table export for a viewer (D4), with the query only in the run row', function () {
+    Queue::fake();
+    DbExplorer::roleUsing(fn (): string => 'viewer');
+
+    $run = $this->actingAs(makeUser(1))
+        ->withSession(['_token' => 'csrf-test-token'])
+        ->withHeaders(['X-CSRF-TOKEN' => 'csrf-test-token'])
+        ->postJson('/dbexplorer/api/main/export', ['table' => ['schema' => 'fixture', 'name' => 'users']])
+        ->assertStatus(202)
+        ->json('data');
+
+    expect($run['type'])->toBe(Export::TYPE)
+        ->and($run['status'])->toBe(RunStatus::QUEUED);
+
+    $model = Run::query()->sole();
+
+    expect($model->only(['user_id', 'label', 'role']))->toBe(['user_id' => '1', 'label' => 'main', 'role' => 'viewer'])
+        ->and($model->meta['sql'])->toStartWith('SELECT "id", "email", ')->toEndWith(' FROM "fixture"."users"')
+        ->and($model->meta['format'])->toBe(ExportWriter::CSV)
+        ->and($model->meta['table'])->toBe(['schema' => 'fixture', 'name' => 'users']);
+
+    Queue::assertPushed(Export::class, function (Export $job) use ($model): bool {
+        return $job->runId === $model->id
+            && ! str_contains(serialize($job), 'fixture')
+            && ! str_contains(serialize($job), 'pgsql');
+    });
+});
+
+it('S12 S13 answers a missing or hidden table export with the same 404, queueing nothing', function (string $name) {
+    Queue::fake();
+    config(['dbexplorer.hidden' => ['fixture.secrets']]);
+    DbExplorer::roleUsing(fn (): string => 'viewer');
+
+    $this->actingAs(makeUser(1))
+        ->withSession(['_token' => 'csrf-test-token'])
+        ->withHeaders(['X-CSRF-TOKEN' => 'csrf-test-token'])
+        ->postJson('/dbexplorer/api/main/export', ['table' => ['schema' => 'fixture', 'name' => $name], 'format' => ExportWriter::SQL])
+        ->assertStatus(404)
+        ->assertExactJson(['message' => 'The database object does not exist.']);
+
+    expect(Run::query()->count())->toBe(0);
+    Queue::assertNothingPushed();
+})->with(['missing' => ['nope'], 'hidden' => ['secrets'], 'injected' => ['users"; DROP TABLE x; --']]);
+
+it('S12 quotes table and column names in sql exports: hostile identifiers restore exactly the rows and nothing else', function () {
+    DbExplorer::roleUsing(fn (): string => 'admin');
+
+    $table = "we\"ird;\n-- t";
+    $quoted = '"'.str_replace('"', '""', $table).'"';
+    $admin = DB::connection('pgsql_admin');
+
+    $admin->unprepared(<<<SQL
+        CREATE TABLE {$this->schema}.{$quoted} ("a""b" text, "c;d" int, "e
+        f" text, "--g" text);
+        CREATE TABLE {$this->schema}.sentinel (n int);
+        INSERT INTO {$this->schema}.sentinel VALUES (1);
+        SQL);
+    $admin->table("{$this->schema}.{$table}")->insert([
+        ['a"b' => "x'); DROP TABLE {$this->schema}.sentinel; --", 'c;d' => 1, "e\nf" => "line\nbreak", '--g' => '"; --'],
+        ['a"b' => null, 'c;d' => 2, "e\nf" => '', '--g' => 'plain'],
+    ]);
+
+    $this->actingAs(makeUser(1))
+        ->withSession(['_token' => 'csrf-test-token'])
+        ->withHeaders(['X-CSRF-TOKEN' => 'csrf-test-token'])
+        ->postJson('/dbexplorer/api/main/export', ['table' => ['schema' => $this->schema, 'name' => $table], 'format' => ExportWriter::SQL])
+        ->assertStatus(202);
+
+    $run = Run::query()->sole();
+    $before = $admin->table("{$this->schema}.{$table}")->orderBy('c;d')->get()->map(fn (object $row): array => (array) $row)->all();
+
+    expect($run->status)->toBe(RunStatus::SUCCEEDED, (string) $run->error);
+
+    $sql = exportContents($run);
+
+    expect(substr_count($sql, "INSERT INTO \"{$this->schema}\".{$quoted} (\"a\"\"b\", \"c;d\", \"e\nf\", \"--g\") VALUES"))->toBe(2);
+
+    // Restored into the emptied table, the file recreates exactly the rows,
+    // and nothing else in the schema changes.
+    $admin->statement("DELETE FROM {$this->schema}.{$quoted}");
+    $admin->unprepared($sql);
+
+    $after = $admin->table("{$this->schema}.{$table}")->orderBy('c;d')->get()->map(fn (object $row): array => (array) $row)->all();
+    $relations = $admin->select('SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ? ORDER BY 1', [$this->schema]);
+
+    expect($after)->toBe($before)
+        ->and(array_column(array_map(fn (object $row): array => (array) $row, $relations), 'relname'))->toBe(['sentinel', $table])
+        ->and($admin->table("{$this->schema}.sentinel")->pluck('n')->all())->toBe([1]);
 });
