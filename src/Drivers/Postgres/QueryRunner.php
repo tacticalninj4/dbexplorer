@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace TacticalNinj4\DbExplorer\Drivers\Postgres;
 
+use Closure;
 use Illuminate\Database\Connection;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Support\Facades\Date;
@@ -11,10 +12,12 @@ use InvalidArgumentException;
 use PDO;
 use PDOException;
 use PDOStatement;
+use TacticalNinj4\DbExplorer\Events\DdlExecuted;
 use TacticalNinj4\DbExplorer\Events\QueryExecuted;
 use TacticalNinj4\DbExplorer\Exceptions\HiddenObjectReferenced;
 use TacticalNinj4\DbExplorer\Exceptions\QueryFailed;
 use TacticalNinj4\DbExplorer\Facades\DbExplorer;
+use TacticalNinj4\DbExplorer\Models\AuditEntry;
 use TacticalNinj4\DbExplorer\Models\QueryHistory;
 use TacticalNinj4\DbExplorer\Role;
 use TacticalNinj4\DbExplorer\Security\HiddenObjects;
@@ -65,7 +68,11 @@ use Throwable;
  * Every run, successful or not, writes an audit entry (action `query`) and a
  * `dbx_query_history` row, then fires {@see QueryExecuted}. Neither stores bound
  * values: SQL text only, and error messages without DETAIL lines and with bound
- * values redacted.
+ * values redacted. A committed run the classifier calls `ddl` or `destructive`
+ * also fires {@see DdlExecuted}.
+ *
+ * runStatements() runs the schema editor's statement list the same way (one
+ * transaction, steps 1–3, 5–7), audited as one `ddl` entry.
  */
 final class QueryRunner
 {
@@ -127,13 +134,18 @@ final class QueryRunner
         $failure = null;
 
         try {
-            $result = $this->execute($connection, $sql, $bindings, $role, $timeout, $cap, $explain, (bool) ($options['unmask'] ?? false));
+            if (Classifier::statements($sql) === []) {
+                throw new QueryFailed('There is no statement to run.', '42601');
+            }
+
+            $unmask = (bool) ($options['unmask'] ?? false);
+            $result = $this->execute($connection, fn (Connection $db, PDO $pdo): array => $this->transaction($db, $pdo, $sql, $bindings, $role, $timeout, $cap, $explain, $unmask));
         } catch (QueryFailed $e) {
             $failure = $e;
         }
 
         $durationMs = (hrtime(true) - $started) / 1e6;
-        $auditId = $this->record($connection, $sql, $bindings, $role, $options, $classification, $durationMs, $result, $failure);
+        $auditId = $this->record('query', $connection, $sql, $bindings, $role, $options, $classification, $durationMs, $result, $failure);
 
         if ($failure !== null) {
             $failure->auditId = $auditId;
@@ -141,7 +153,7 @@ final class QueryRunner
             throw $failure;
         }
 
-        /** @var array{columns: list<array{name: string, type: string, masked: bool}>, rows: list<list<mixed>>, affected: int|null, truncated: bool, notices: list<string>, noticesSupported: bool} $result */
+        /** @var array{columns: list<array{name: string, type: string, masked: bool}>, rows: list<list<mixed>>, affected: int|null, truncated: bool, notices: list<string>, noticesSupported: bool, committed: bool} $result */
         $plan = null;
 
         if ($explain !== null) {
@@ -167,20 +179,96 @@ final class QueryRunner
     }
 
     /**
-     * Run on the raw PDO and leave the session as it was found, whatever happens:
-     * no open transaction, and no state the statement left behind.
+     * Run several statements as `$role` in ONE transaction on the Laravel
+     * connection `$connection`, for the schema editor (PRD §7.4): all of them
+     * commit, or none does. Each statement is natively prepared on its own, so
+     * each must be a single command, and none may need to run outside a
+     * transaction (CREATE INDEX CONCURRENTLY fails with 25001).
      *
-     * @param  array<int|string, scalar|null>  $bindings
-     * @return array{columns: list<array{name: string, type: string, masked: bool}>, rows: list<list<mixed>>, affected: int|null, truncated: bool, notices: list<string>, noticesSupported: bool}
+     * Same safety as run(): the role's transaction mode and timeout (covering
+     * each statement), the hidden-object check, and the session reset. One
+     * audit entry (action `ddl`) covers the list, its SQL the statements
+     * joined with ";\n"; there is no history row and no QueryExecuted. On
+     * commit, DDL or destructive SQL fires {@see DdlExecuted}.
+     *
+     * @param  list<string>  $statements
+     * @param  array{label?: string|null, user_id?: string|int|null}  $options
+     *
+     * @throws QueryFailed when a statement fails; its `statement` is the failing index
+     * @throws InvalidArgumentException for an unknown role
      */
-    private function execute(string $name, string $sql, array $bindings, string $role, int $timeout, int $cap, ?string $explain, bool $unmask): array
+    public function runStatements(string $connection, array $statements, string $role, array $options = []): QueryResult
+    {
+        if (! Role::isValid($role)) {
+            throw new InvalidArgumentException("Unknown role [{$role}].");
+        }
+
+        $timeout = $this->limit($role, 'timeout');
+        $sql = implode(";\n", $statements);
+        $classification = Classifier::classify($sql);
+        $started = hrtime(true);
+        $result = null;
+        $failure = null;
+
+        try {
+            foreach ($statements as $index => $statement) {
+                if (Classifier::statements($statement) === []) {
+                    $failure = new QueryFailed('There is no statement to run.', '42601');
+                    $failure->statement = $index;
+
+                    throw $failure;
+                }
+            }
+
+            if ($statements === []) {
+                throw new QueryFailed('There is no statement to run.', '42601');
+            }
+
+            $result = $this->execute($connection, fn (Connection $db, PDO $pdo): array => $this->statementsTransaction($db, $pdo, $statements, $role, $timeout));
+        } catch (QueryFailed $e) {
+            $failure = $e;
+        }
+
+        $durationMs = (hrtime(true) - $started) / 1e6;
+        $auditId = $this->record('ddl', $connection, $sql, [], $role, $options, $classification, $durationMs, $result, $failure, array_filter([
+            'statements' => count($statements),
+            'failed_statement' => $failure?->statement,
+        ], fn (mixed $value): bool => $value !== null));
+
+        if ($failure !== null) {
+            $failure->auditId = $auditId;
+
+            throw $failure;
+        }
+
+        /** @var array{notices: list<string>, noticesSupported: bool} $result */
+        return new QueryResult(
+            $classification,
+            [],
+            [],
+            0,
+            null,
+            false,
+            round($durationMs, 3),
+            $result['notices'],
+            $result['noticesSupported'],
+            null,
+            null,
+            $auditId,
+        );
+    }
+
+    /**
+     * Run `$body` on the raw PDO and leave the session as it was found, whatever
+     * happens: no open transaction, and no state the statements left behind.
+     *
+     * @param  Closure(Connection, PDO): array{columns: list<array{name: string, type: string, masked: bool}>, rows: list<list<mixed>>, affected: int|null, truncated: bool, notices: list<string>, noticesSupported: bool, committed: bool}  $body
+     * @return array{columns: list<array{name: string, type: string, masked: bool}>, rows: list<list<mixed>>, affected: int|null, truncated: bool, notices: list<string>, noticesSupported: bool, committed: bool}
+     */
+    private function execute(string $name, Closure $body): array
     {
         $connection = $this->connection($name);
         $pdo = $this->pdo($connection);
-
-        if (Classifier::statements($sql) === []) {
-            throw new QueryFailed('There is no statement to run.', '42601');
-        }
 
         // Rolling back or committing would end the caller's own transaction.
         if ($connection->transactionLevel() > 0 || $pdo->inTransaction()) {
@@ -190,7 +278,7 @@ final class QueryRunner
         $settings = $this->sessionSettings($pdo, $name);
 
         try {
-            return $this->transaction($connection, $pdo, $sql, $bindings, $role, $timeout, $cap, $explain, $unmask);
+            return $body($connection, $pdo);
         } finally {
             // The transaction's statements are gone by now, so DISCARD can't pull a live one away.
             $this->resetSession($pdo, $name, $settings);
@@ -201,7 +289,7 @@ final class QueryRunner
      * Steps 1–6, in one transaction that is always closed on return.
      *
      * @param  array<int|string, scalar|null>  $bindings
-     * @return array{columns: list<array{name: string, type: string, masked: bool}>, rows: list<list<mixed>>, affected: int|null, truncated: bool, notices: list<string>, noticesSupported: bool}
+     * @return array{columns: list<array{name: string, type: string, masked: bool}>, rows: list<list<mixed>>, affected: int|null, truncated: bool, notices: list<string>, noticesSupported: bool, committed: bool}
      */
     private function transaction(Connection $connection, PDO $pdo, string $sql, array $bindings, string $role, int $timeout, int $cap, ?string $explain, bool $unmask): array
     {
@@ -305,6 +393,70 @@ final class QueryRunner
             'truncated' => $truncated,
             'notices' => array_slice($notices, 0, self::MAX_NOTICES),
             'noticesSupported' => $noticesSupported,
+            'committed' => $commit,
+        ];
+    }
+
+    /**
+     * runStatements()' transaction: steps 1–3 and 5 for each statement, then
+     * COMMIT (ROLLBACK for viewers), always closed on return.
+     *
+     * @param  list<string>  $statements
+     * @return array{columns: list<array{name: string, type: string, masked: bool}>, rows: list<list<mixed>>, affected: int|null, truncated: bool, notices: list<string>, noticesSupported: bool, committed: bool}
+     */
+    private function statementsTransaction(Connection $connection, PDO $pdo, array $statements, string $role, int $timeout): array
+    {
+        $readOnly = $role === Role::VIEWER;
+        $notices = [];
+        $index = null;
+
+        try {
+            $pdo->exec($readOnly ? 'BEGIN READ ONLY' : 'BEGIN');
+
+            $this->prepare($pdo, "SELECT set_config('statement_timeout', ?, true)")->execute([(string) ($timeout * 1000)]);
+
+            $noticesSupported = $this->listenForNotices($pdo, $notices);
+
+            try {
+                foreach ($statements as $index => $sql) {
+                    $this->rejectHiddenRelations($pdo, $sql, []);
+
+                    $statement = $this->prepare($pdo, $sql);
+                    $statement->execute();
+                    $statement->closeCursor();
+                }
+            } finally {
+                $this->stopListening($pdo);
+            }
+
+            $pdo->exec($readOnly ? 'ROLLBACK' : 'COMMIT');
+        } catch (PDOException $e) {
+            $this->abort($connection, $pdo);
+
+            $failure = QueryFailed::fromPdo($e, $index === null ? '' : $statements[$index]);
+            $failure->statement = $index;
+
+            throw $failure;
+        } catch (QueryFailed $e) {
+            $this->abort($connection, $pdo);
+
+            $e->statement = $index;
+
+            throw $e;
+        } catch (Throwable $e) {
+            $this->abort($connection, $pdo);
+
+            throw $e;
+        }
+
+        return [
+            'columns' => [],
+            'rows' => [],
+            'affected' => null,
+            'truncated' => false,
+            'notices' => array_slice($notices, 0, self::MAX_NOTICES),
+            'noticesSupported' => $noticesSupported,
+            'committed' => ! $readOnly,
         ];
     }
 
@@ -670,13 +822,16 @@ final class QueryRunner
     }
 
     /**
-     * Audit entry, history row, then the event. Returns the audit id.
+     * Audit entry, then for `query` the history row and QueryExecuted, then
+     * DdlExecuted when DDL or destructive SQL committed. Returns the audit id.
      *
+     * @param  'query'|'ddl'  $action
      * @param  array<int|string, scalar|null>  $bindings
      * @param  array{explain?: string|null, unmask?: bool, label?: string|null, user_id?: string|int|null}  $options
-     * @param  array{columns: list<array{name: string, type: string, masked: bool}>, rows: list<list<mixed>>, affected: int|null, truncated: bool, notices: list<string>, noticesSupported: bool}|null  $result
+     * @param  array{columns: list<array{name: string, type: string, masked: bool}>, rows: list<list<mixed>>, affected: int|null, truncated: bool, notices: list<string>, noticesSupported: bool, committed: bool}|null  $result
+     * @param  array<string, mixed>  $meta  Extra audit meta
      */
-    private function record(string $connection, string $sql, array $bindings, string $role, array $options, string $classification, float $durationMs, ?array $result, ?QueryFailed $failure): int
+    private function record(string $action, string $connection, string $sql, array $bindings, string $role, array $options, string $classification, float $durationMs, ?array $result, ?QueryFailed $failure, array $meta = []): int
     {
         $rowCount = null;
 
@@ -688,7 +843,7 @@ final class QueryRunner
         $outcome = $failure === null ? 'success' : 'error';
 
         $entry = [
-            'action' => 'query',
+            'action' => $action,
             'role' => $role,
             'sql' => $sql,
             'classification' => $classification,
@@ -703,7 +858,7 @@ final class QueryRunner
                 'bindings' => $bindings === [] ? null : count($bindings),
                 'sqlstate' => $failure?->sqlState,
                 'hidden_object' => $failure instanceof HiddenObjectReferenced ? $failure->relation : null,
-            ], fn (mixed $value): bool => $value !== null),
+            ], fn (mixed $value): bool => $value !== null) + $meta,
         ];
 
         foreach (['label', 'user_id'] as $key) {
@@ -714,6 +869,22 @@ final class QueryRunner
 
         $audit = DbExplorer::audit($entry);
 
+        if ($action === 'query') {
+            $this->recordQuery($audit, $connection, $sql, $role, $classification, $durationMs, $rowCount, $outcome, $error);
+        }
+
+        if ($result !== null && $result['committed'] && in_array($classification, [Classifier::DDL, Classifier::DESTRUCTIVE], true)) {
+            event(new DdlExecuted($audit->id, $audit->user_id, $audit->label, $role, $classification, $sql));
+        }
+
+        return $audit->id;
+    }
+
+    /**
+     * The history row and QueryExecuted for an interactive query.
+     */
+    private function recordQuery(AuditEntry $audit, string $connection, string $sql, string $role, string $classification, float $durationMs, ?int $rowCount, string $outcome, ?string $error): void
+    {
         QueryHistory::query()->insert([
             'user_id' => $audit->user_id,
             'label' => $audit->label ?? $connection,
@@ -738,8 +909,6 @@ final class QueryRunner
             $rowCount,
             $outcome,
         ));
-
-        return $audit->id;
     }
 
     /**

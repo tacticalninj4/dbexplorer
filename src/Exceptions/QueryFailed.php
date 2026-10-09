@@ -7,6 +7,7 @@ namespace TacticalNinj4\DbExplorer\Exceptions;
 use Illuminate\Http\JsonResponse;
 use PDOException;
 use RuntimeException;
+use TacticalNinj4\DbExplorer\Drivers\Postgres\QueryRunner;
 
 /**
  * A query the database (or the QueryRunner) refused or that failed while running.
@@ -17,6 +18,12 @@ use RuntimeException;
  */
 class QueryFailed extends RuntimeException
 {
+    /**
+     * For a statement list ({@see QueryRunner::runStatements()}): the 0-based
+     * index of the statement that failed. `position` is then within that one.
+     */
+    public ?int $statement = null;
+
     /**
      * @param  string|null  $sqlState  The five-character SQLSTATE, e.g. 42601, or null when there is none
      * @param  int|null  $position  1-based character offset of the error in the submitted SQL
@@ -33,16 +40,23 @@ class QueryFailed extends RuntimeException
     }
 
     /**
-     * The API answer: 422 with the message, SQLSTATE and position, nothing else.
+     * The API answer: 422 with the message, SQLSTATE and position (plus the
+     * failing statement's index for a statement list), nothing else.
      * A hidden relation (HiddenObjectReferenced) renders exactly like a missing one.
      */
     public function render(): JsonResponse
     {
-        return new JsonResponse(['error' => [
+        $error = [
             'message' => $this->getMessage(),
             'sqlstate' => $this->sqlState,
             'position' => $this->position,
-        ]], 422);
+        ];
+
+        if ($this->statement !== null) {
+            $error['statement'] = $this->statement;
+        }
+
+        return new JsonResponse(['error' => $error], 422);
     }
 
     /**
