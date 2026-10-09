@@ -100,6 +100,10 @@ return [
         'background' => ['timeout' => 3600],
         'queries_per_minute' => 60,
         'sql_length' => 100000,
+
+        // CSV imports (PRD §7.6): the upload cap in kilobytes, and how many
+        // rows each COPY batch streams before checking for cancellation.
+        'import' => ['max_upload_kb' => 51200, 'batch' => 5000],
     ],
 
     /*
