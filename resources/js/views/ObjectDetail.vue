@@ -3,8 +3,10 @@ import { computed, nextTick, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api, ApiError, describeError, segment } from '../api';
 import CodeBlock from '../components/CodeBlock.vue';
+import DdlForm from '../components/DdlForm.vue';
 import TableData from '../components/TableData.vue';
 import { sendToEditor } from '../composables/editorInbox';
+import { findConnection } from '../composables/session';
 import { formatBytes, formatDate, formatNumber } from '../composables/format';
 import { qualified } from '../sql/identifiers';
 import type { Column, Constraint, DbObject, FunctionDefinition, Index, ObjectType, Stats, Trigger } from '../types';
@@ -48,6 +50,15 @@ const object = ref<DbObject | null>(null);
 const fn = ref<FunctionDefinition | null>(null);
 const error = ref<string | null>(null);
 const loading = ref(false);
+
+/** M2 schema editing (PRD §7.4): admins only, and only tables have forms. */
+const ddlOpen = ref(false);
+const alterable = computed(() => {
+    const type = object.value?.type;
+
+    return type === 'table' || type === 'partitioned_table';
+});
+const isAdmin = computed(() => findConnection(label.value)?.role === 'admin');
 
 const tabs = computed<Tab[]>(() => {
     if (isFunction.value) {
@@ -206,6 +217,9 @@ watch(activeTab, () => void loadTab());
             <button v-if="object && object.type !== 'enum' && object.type !== 'domain' && object.type !== 'composite_type'" type="button" class="dbx-btn ml-auto" @click="queryInEditor">
                 Open in SQL editor
             </button>
+            <button v-if="isAdmin && alterable" type="button" class="dbx-btn dbx-btn-primary" @click="ddlOpen = true">
+                Alter table
+            </button>
             <p v-if="object?.comment || fn?.comment" class="w-full text-sm text-zinc-500 dark:text-zinc-400">{{ object?.comment ?? fn?.comment }}</p>
         </header>
 
@@ -360,5 +374,20 @@ watch(activeTab, () => void loadTab());
                 </template>
             </section>
         </template>
+
+        <DdlForm
+            :open="ddlOpen"
+            :label="label"
+            :schema="schema"
+            :name="name"
+            @close="
+                (changed: boolean) => {
+                    ddlOpen = false;
+                    if (changed) {
+                        void loadObject();
+                    }
+                }
+            "
+        />
     </div>
 </template>

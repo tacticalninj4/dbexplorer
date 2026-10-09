@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { api, describeError, segment } from '../api';
+import { primaryKey } from '../composables/catalog';
 import { formatNumber } from '../composables/format';
-import type { Filter, RowsPage } from '../types';
+import { findConnection } from '../composables/session';
+import type { Cell, Filter, RowsPage } from '../types';
 import DataGrid from './DataGrid.vue';
+import RowEditor from './RowEditor.vue';
 
 /**
  * The Data tab: a server-side paged view of a table, view or materialized
@@ -26,6 +29,29 @@ const stack = ref<{ cursor?: string; offset?: number }[]>([{}]);
 const exactCount = ref<number | null>(null);
 const counting = ref(false);
 let sequence = 0;
+
+/** M2 writes: the primary key (writes need one) and the picked row. */
+const key = ref<string[] | null>(null);
+const selectedIndex = ref(-1);
+const editor = ref<{ mode: 'insert' | 'update' | 'delete' } | null>(null);
+
+const canWrite = computed(() => key.value !== null && key.value.length > 0 && (findConnection(props.label)?.role ?? 'viewer') !== 'viewer');
+
+const selectedRow = computed<Record<string, Cell> | null>(() => {
+    const data = page.value;
+    const index = selectedIndex.value;
+
+    if (!data || index < 0 || index >= data.rows.length) {
+        return null;
+    }
+
+    const row: Record<string, Cell> = {};
+    data.columns.forEach((column, position) => {
+        row[column.name] = data.rows[index]?.[position] ?? null;
+    });
+
+    return row;
+});
 
 const rowOffset = computed(() => {
     const current = stack.value[stack.value.length - 1];
@@ -152,7 +178,12 @@ watch(
         sort.value = null;
         filters.value = [];
         page.value = null;
+        selectedIndex.value = -1;
+        editor.value = null;
         restart();
+        primaryKey(props.label, props.schema, props.name).then((columns) => {
+            key.value = columns;
+        });
     },
     { immediate: true },
 );
@@ -170,10 +201,13 @@ watch(
             :row-offset="rowOffset"
             :sort="sort"
             :filters="filters"
+            :selectable="canWrite"
+            :selected="selectedIndex"
             sortable
             filterable
             @sort="onSort"
             @filter="onFilter"
+            @row-click="(index: number) => (selectedIndex = selectedIndex === index ? -1 : index)"
         >
             <template #toolbar>
                 <div class="flex items-center gap-1" role="group" aria-label="Pages">
@@ -201,7 +235,33 @@ watch(
                 <span v-if="page" class="text-xs text-zinc-400" :title="page.pagination === 'keyset' ? 'Paged by key: fast at any depth' : 'Paged by offset: no usable key'">
                     {{ page.pagination }}
                 </span>
+                <span v-if="canWrite" class="ml-auto flex items-center gap-1" role="group" aria-label="Row actions">
+                    <button type="button" class="dbx-btn dbx-btn-primary" @click="selectedIndex = -1; editor = { mode: 'insert' }">Insert row</button>
+                    <button type="button" class="dbx-btn" :disabled="!selectedRow" @click="editor = { mode: 'update' }">Edit row</button>
+                    <button type="button" class="dbx-btn dbx-btn-danger" :disabled="!selectedRow" @click="editor = { mode: 'delete' }">Delete row</button>
+                </span>
+                <span v-else-if="key !== null && key.length === 0" class="ml-auto text-xs text-zinc-400" title="Inline editing needs a primary key">
+                    read-only (no primary key)
+                </span>
             </template>
         </DataGrid>
+
+        <RowEditor
+            :open="editor !== null"
+            :mode="editor?.mode ?? 'insert'"
+            :label="label"
+            :schema="schema"
+            :name="name"
+            :columns="page?.columns ?? []"
+            :primary-key="key ?? []"
+            :row="selectedRow"
+            @close="(saved: boolean) => {
+                editor = null;
+                if (saved) {
+                    selectedIndex = -1;
+                    void load();
+                }
+            }"
+        />
     </div>
 </template>
