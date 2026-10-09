@@ -8,6 +8,7 @@ import ConnectionLayout from './views/ConnectionLayout.vue';
 import HistoryView from './views/HistoryView.vue';
 import HomeView from './views/HomeView.vue';
 import ObjectDetail from './views/ObjectDetail.vue';
+import RunsView from './views/RunsView.vue';
 
 const router = createRouter({
     history: createWebHistory(`${basePath}/`),
@@ -21,6 +22,7 @@ const router = createRouter({
                 // CodeMirror is only loaded once someone opens the editor.
                 { path: 'sql', name: 'sql', component: () => import('./views/SqlEditorView.vue') },
                 { path: 'history', name: 'history', component: HistoryView },
+                { path: 'runs', name: 'runs', component: RunsView },
                 // A function is addressed by its signature, with ?fn=1. Tabs are ?tab=.
                 { path: ':schema/:name', name: 'object', component: ObjectDetail },
             ],

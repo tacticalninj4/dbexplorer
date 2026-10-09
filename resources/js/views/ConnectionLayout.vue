@@ -15,6 +15,7 @@ const links = computed(() => [
     { name: 'connection', title: 'Overview' },
     { name: 'sql', title: 'SQL editor' },
     { name: 'history', title: 'History' },
+    { name: 'runs', title: 'Runs' },
 ]);
 </script>
 
