@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace TacticalNinj4\DbExplorer\Drivers\Postgres;
 
+use Closure;
 use Illuminate\Database\Connection;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Support\Facades\Date;
@@ -164,6 +165,92 @@ final class QueryRunner
             $plan,
             $auditId,
         );
+    }
+
+    /**
+     * Run a few statements the caller builds itself (e.g. RowWriter) in one
+     * transaction, with the same safety as run(): the role's transaction mode
+     * and timeout, native prepares, bound values, a connection with an open
+     * transaction refused, and the session reset afterwards. It commits when
+     * `$callback` returns and rolls back when it throws.
+     *
+     * Unlike run() it writes no audit entry, history row or event, and checks
+     * neither hidden objects nor masks: the caller does all of that.
+     *
+     * `$callback` gets `$statement(string $sql, array $bindings)`, which runs
+     * one statement and returns `{columns: list<string>, rows: list<list<mixed>>,
+     * affected: int}`, bytea as `\x…` hex, at most the role's row cap of rows.
+     * A database error rolls back and is thrown as QueryFailed.
+     *
+     * @template T
+     *
+     * @param  Closure(Closure(string, array<int, scalar|null>): array{columns: list<string>, rows: list<list<mixed>>, affected: int}): T  $callback
+     * @return T
+     *
+     * @throws QueryFailed
+     */
+    public function atomic(string $connection, string $role, Closure $callback): mixed
+    {
+        if (! Role::isValid($role)) {
+            throw new InvalidArgumentException("Unknown role [{$role}].");
+        }
+
+        $timeout = $this->limit($role, 'timeout');
+        $cap = $this->limit($role, 'rows');
+        $db = $this->connection($connection);
+        $pdo = $this->pdo($db);
+
+        // Committing or rolling back would end the caller's own transaction.
+        if ($db->transactionLevel() > 0 || $pdo->inTransaction()) {
+            throw new QueryFailed('The connection already has an open transaction.', '25001');
+        }
+
+        $settings = $this->sessionSettings($pdo, $connection);
+        $sql = '';
+
+        $statement = function (string $text, array $bindings) use ($pdo, $cap, &$sql): array {
+            $sql = $text;
+            $this->validateBindings($bindings);
+
+            $prepared = $this->prepare($pdo, $text);
+            $this->bind($prepared, $bindings);
+            $prepared->execute();
+
+            $rows = $this->fetch($prepared, $cap);
+            $columns = [];
+
+            for ($i = 0; $i < $prepared->columnCount(); $i++) {
+                $meta = $prepared->getColumnMeta($i);
+                $columns[] = is_array($meta) ? $meta['name'] : '';
+            }
+
+            $affected = $prepared->rowCount();
+            $prepared->closeCursor();
+
+            return ['columns' => $columns, 'rows' => $rows, 'affected' => $affected];
+        };
+
+        try {
+            $pdo->exec($role === Role::VIEWER ? 'BEGIN READ ONLY' : 'BEGIN');
+            $this->prepare($pdo, "SELECT set_config('statement_timeout', ?, true)")->execute([(string) ($timeout * 1000)]);
+
+            $result = $callback($statement);
+
+            $pdo->exec('COMMIT');
+
+            return $result;
+        } catch (PDOException $e) {
+            $this->abort($db, $pdo);
+
+            throw QueryFailed::fromPdo($e, $sql);
+        } catch (Throwable $e) {
+            $this->abort($db, $pdo);
+
+            throw $e;
+        } finally {
+            // The transaction is closed by now, so DISCARD can't pull a live statement away.
+            $this->resetSession($pdo, $connection, $settings);
+        }
     }
 
     /**
@@ -684,7 +771,7 @@ final class QueryRunner
             $rowCount = $result['columns'] === [] ? $result['affected'] : count($result['rows']);
         }
 
-        $error = $failure === null ? null : $this->auditError($failure, $bindings);
+        $error = $failure === null ? null : self::auditError($failure, $bindings);
         $outcome = $failure === null ? 'success' : 'error';
 
         $entry = [
@@ -748,7 +835,7 @@ final class QueryRunner
      *
      * @param  array<int|string, scalar|null>  $bindings
      */
-    private function auditError(QueryFailed $failure, array $bindings): string
+    public static function auditError(QueryFailed $failure, array $bindings): string
     {
         $message = strtok($failure->getMessage(), "\n");
         $message = $message === false ? '' : $message;
