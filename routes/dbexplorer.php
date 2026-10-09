@@ -15,6 +15,7 @@ use TacticalNinj4\DbExplorer\Http\Controllers\QueryController;
 use TacticalNinj4\DbExplorer\Http\Controllers\RowsController;
 use TacticalNinj4\DbExplorer\Http\Controllers\RowWriteController;
 use TacticalNinj4\DbExplorer\Http\Controllers\RunsController;
+use TacticalNinj4\DbExplorer\Http\Controllers\SavedQueryController;
 use TacticalNinj4\DbExplorer\Http\Controllers\ScriptController;
 use TacticalNinj4\DbExplorer\Http\Controllers\ShellController;
 
@@ -64,6 +65,11 @@ Route::prefix('api/{label}')->middleware('throttle:dbexplorer')->group(function 
     Route::post('runs/{run}/cancel', [RunsController::class, 'cancel'])->name('runs.cancel');
     Route::get('runs/{run}/download', [RunsController::class, 'download'])->name('runs.download');
     Route::post('script', ScriptController::class)->name('script');
+    Route::get('queries', [SavedQueryController::class, 'index'])->name('queries');
+    Route::post('queries', [SavedQueryController::class, 'store'])->name('queries.store');
+    Route::patch('queries/{query}', [SavedQueryController::class, 'update'])->name('queries.update');
+    Route::delete('queries/{query}', [SavedQueryController::class, 'destroy'])->name('queries.destroy');
+    Route::post('queries/{query}/run', [SavedQueryController::class, 'run'])->name('queries.run');
 });
 
 // A run's result file, behind a signed URL handed out by runs/{run}/download
