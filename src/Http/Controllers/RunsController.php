@@ -115,10 +115,8 @@ class RunsController
      * The result file itself, behind a valid signature and the requester
      * check from the download route: the owner, or an admin of the run's
      * label (PRD §7.5). Anything else is a 404, so run ids can't be probed.
-     *
-     * @return StreamedResponse
      */
-    public function file(Request $request, DbExplorer $explorer, string $run)
+    public function file(Request $request, DbExplorer $explorer, string $run): StreamedResponse
     {
         abort_unless(ctype_digit($run), 404);
 

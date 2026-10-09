@@ -124,7 +124,7 @@ final class ExportWriter
      *
      * @return resource
      */
-    public function stream()
+    public function stream(): mixed
     {
         $this->assertOpen();
 

@@ -194,7 +194,7 @@ class ImportController
      *
      * @throws ValidationException
      */
-    private function open(Request $request, string $token, bool $close = false)
+    private function open(Request $request, string $token, bool $close = false): mixed
     {
         if (! preg_match('/^(\d+)-([a-f0-9]{40})$/', $token, $matches)) {
             throw ValidationException::withMessages(['token' => ['Unknown import token.']]);
