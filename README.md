@@ -34,7 +34,7 @@ Read [docs/security.md](docs/security.md) for the threat model, the PostgreSQL r
 | PostgreSQL | 12+, with the `pdo_pgsql` extension |
 | Scheduler | for `dbx:prune` and `dbx:audit:verify` |
 | Queue worker | for background queries, exports, imports and scripts *(planned)* |
-| `pg_dump` | for backups *(planned)*, matching your server's major version |
+| `pg_dump` | for backups, matching your server's major version |
 
 Several of these Laravel and PHP versions no longer get upstream security fixes; support for those is best-effort. MySQL support is planned for v2.
 
@@ -162,9 +162,9 @@ All keys live in `config/dbexplorer.php`.
 | `masking` | `*.password`, `*.*token*`, `*.*secret*` | Globs for `table.column` values masked in grids and exports *(planned, M1)*. |
 | `queue.connection` | `null` | Queue connection for background work; null uses the app default *(planned, M3)*. |
 | `queue.queue` | `'default'` | Queue name for background work *(planned, M3)*. |
-| `backup.pg_dump_path` | `'pg_dump'` | The `pg_dump` binary *(planned, M4)*. |
-| `backup.disk` | `'local'` | Private disk for backups *(planned, M4)*. |
-| `backup.keep` | `7` | Backups kept per connection label *(planned, M4)*. |
+| `backup.pg_dump_path` | `'pg_dump'` | The `pg_dump` binary |
+| `backup.disk` | `'local'` | Private disk for backups |
+| `backup.keep` | `7` | Backups kept per connection label |
 | `storage.connection` | `env('DBEXPLORER_STORAGE_CONNECTION')` | Connection for the `dbx_*` tables; null uses the app default. Recommended: a connection on the `dbexplorer` schema. |
 | `storage.disk` | `'local'` | Private disk for exports and other generated files *(planned, M3)*. |
 | `storage.file_ttl_hours` | `24` | Generated files are pruned after this many hours *(planned, M3)*. |

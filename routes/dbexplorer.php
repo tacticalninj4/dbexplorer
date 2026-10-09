@@ -6,6 +6,7 @@ use Illuminate\Routing\Middleware\ThrottleRequests;
 use Illuminate\Support\Facades\Route;
 use TacticalNinj4\DbExplorer\Http\Controllers\AssetController;
 use TacticalNinj4\DbExplorer\Http\Controllers\AuditController;
+use TacticalNinj4\DbExplorer\Http\Controllers\BackupController;
 use TacticalNinj4\DbExplorer\Http\Controllers\ConfirmPasswordController;
 use TacticalNinj4\DbExplorer\Http\Controllers\DdlController;
 use TacticalNinj4\DbExplorer\Http\Controllers\ExportController;
@@ -80,6 +81,8 @@ Route::prefix('api/{label}')->middleware('throttle:dbexplorer')->group(function 
     Route::post('schedules', [ScheduleController::class, 'store'])->name('schedules.store');
     Route::patch('schedules/{schedule}', [ScheduleController::class, 'update'])->name('schedules.update');
     Route::delete('schedules/{schedule}', [ScheduleController::class, 'destroy'])->name('schedules.destroy');
+    Route::get('backups', [BackupController::class, 'index'])->name('backups');
+    Route::post('backups', [BackupController::class, 'store'])->name('backups.store');
     Route::get('audit', AuditController::class)->name('audit');
 });
 

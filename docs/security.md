@@ -204,6 +204,18 @@ Each `dbx_audit_log` row stores `hash = HMAC-SHA256(key, prev_hash . canonical_j
 4. Start a new chain: `DELETE FROM dbx_audit_log; UPDATE dbx_audit_head SET hash = NULL WHERE id = 1;`
 5. Set the new `DBEXPLORER_AUDIT_KEY`, clear the config cache, run `dbx:audit:verify` (0 entries), and re-enable DbExplorer.
 
-## 6. Reporting a vulnerability
+## 6. Backups
+
+Backups run `pg_dump` through Symfony Process as an **argument array** — never a shell string — and the password reaches it only through the `PGPASSWORD` environment variable, never on the command line where `ps` or an error log would show it. A dump is stored on the private disk configured at `backup.disk`, downloadable by its run's owner through the same short-lived signed URL as any run result.
+
+**Restoring is a CLI job, deliberately not an API.** An authenticated admin being able to trigger a restore of the database they browse would make every other control in this document decorative. To restore:
+
+```bash
+pg_restore --host ... --username ... --dbname <target database> --clean --if-exists <dump file>
+```
+
+Point `pg_restore` at a database *you* choose (a copy first, the real one after checking it), with a login *you* control. The dump's `pg_restore --list` shows what it contains before you commit to anything.
+
+## 7. Reporting a vulnerability
 
 Please don't open a public issue. Follow [the security policy](../.github/SECURITY.md).
