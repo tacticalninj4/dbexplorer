@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Route;
 use TacticalNinj4\DbExplorer\Http\Controllers\AssetController;
 use TacticalNinj4\DbExplorer\Http\Controllers\ConfirmPasswordController;
 use TacticalNinj4\DbExplorer\Http\Controllers\DdlController;
+use TacticalNinj4\DbExplorer\Http\Controllers\ExportController;
 use TacticalNinj4\DbExplorer\Http\Controllers\MeController;
 use TacticalNinj4\DbExplorer\Http\Controllers\ObjectsController;
 use TacticalNinj4\DbExplorer\Http\Controllers\QueryController;
@@ -51,13 +52,20 @@ Route::prefix('api/{label}')->middleware('throttle:dbexplorer')->group(function 
     Route::delete('rows/{schema}/{name}', [RowWriteController::class, 'delete'])->name('rows.delete');
     Route::post('query', [QueryController::class, 'run'])->name('query');
     Route::get('history', [QueryController::class, 'history'])->name('history');
+    Route::post('export', ExportController::class)->name('export');
     Route::post('ddl/preview', [DdlController::class, 'preview'])->name('ddl.preview');
     Route::post('ddl/execute', [DdlController::class, 'execute'])->name('ddl.execute');
     Route::get('runs', [RunsController::class, 'index'])->name('runs');
     Route::get('runs/{run}', [RunsController::class, 'show'])->name('runs.show');
     Route::post('runs/{run}/cancel', [RunsController::class, 'cancel'])->name('runs.cancel');
+    Route::get('runs/{run}/download', [RunsController::class, 'download'])->name('runs.download');
     Route::post('script', ScriptController::class)->name('script');
 });
+
+// A run's result file, behind a signed URL handed out by runs/{run}/download
+// (S16). Signature only: the handler re-checks the requester itself, and the
+// per-connection throttle must not apply to the actual download.
+Route::get('api/runs/{run}/file', [RunsController::class, 'file'])->middleware('signed')->name('runs.file');
 
 Route::get('assets/{path}', AssetController::class)->where('path', '.+')->name('asset');
 

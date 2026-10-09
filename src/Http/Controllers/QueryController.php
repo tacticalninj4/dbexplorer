@@ -7,10 +7,13 @@ namespace TacticalNinj4\DbExplorer\Http\Controllers;
 use Closure;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 use TacticalNinj4\DbExplorer\Drivers\Postgres\QueryRunner;
 use TacticalNinj4\DbExplorer\Exceptions\QueryFailed;
 use TacticalNinj4\DbExplorer\Http\Middleware\ResolveRole;
+use TacticalNinj4\DbExplorer\Jobs\RunQuery;
 use TacticalNinj4\DbExplorer\Models\QueryHistory;
+use TacticalNinj4\DbExplorer\Models\Run;
 use TacticalNinj4\DbExplorer\Role;
 use TacticalNinj4\DbExplorer\Security\PasswordConfirmation;
 use TacticalNinj4\DbExplorer\Sql\Classifier;
@@ -65,6 +68,7 @@ class QueryController
             'explain' => ['sometimes', 'nullable', 'in:'.QueryRunner::EXPLAIN_PLAIN.','.QueryRunner::EXPLAIN_ANALYZE],
             'unmask' => ['sometimes', 'boolean'],
             'confirm' => ['sometimes', 'boolean'],
+            'background' => ['sometimes', 'boolean'],
         ]);
 
         $role = (string) $request->attributes->get(ResolveRole::ROLE);
@@ -74,6 +78,26 @@ class QueryController
 
         if (($input['explain'] ?? null) === null) {
             $classification = Classifier::classify((string) $input['sql']);
+
+            if ((bool) ($input['background'] ?? false)) {
+                // A background run streams to a file: only reads qualify, and
+                // no explain, unmask or confirmation applies (PRD §7.3, §7.5).
+                if ($classification !== Classifier::READ) {
+                    throw ValidationException::withMessages(['background' => ['Only SELECT-style queries can run in the background.']]);
+                }
+
+                /** @var array<int|string, scalar|null> $bindings */
+                $bindings = $input['bindings'] ?? [];
+
+                $run = Run::queueFor($request, RunQuery::TYPE, [
+                    'sql' => (string) $input['sql'],
+                    'bindings' => $bindings,
+                ]);
+
+                RunQuery::dispatch($run->id);
+
+                return new JsonResponse(['data' => $run->toApi()], 202);
+            }
 
             abort_if($role !== Role::ADMIN && Classifier::isDdl((string) $input['sql']), 403, 'Only admins can run DDL (CREATE, ALTER, DROP, TRUNCATE, GRANT, ...).');
 
