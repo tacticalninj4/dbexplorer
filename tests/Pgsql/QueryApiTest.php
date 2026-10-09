@@ -65,7 +65,7 @@ it('binds named values', function () {
 it('S9 answers a viewer UPDATE with 422 and SQLSTATE 25006, even on a login with write grants', function () {
     config(['dbexplorer.connections.main.viewer' => 'pgsql_editor']);
 
-    queryAs($this, 'viewer', ['sql' => "UPDATE fixture.counters SET value = value + 1 WHERE name = 'visits'"])
+    queryAs($this, 'viewer', ['sql' => "UPDATE fixture.counters SET value = value + 1 WHERE name = 'visits'", 'confirm' => true])
         ->assertStatus(422)
         ->assertJsonPath('error.sqlstate', '25006');
 
@@ -79,7 +79,7 @@ it('S8 rejects multiple statements with 422 and runs none of them', function (st
     // The DROP makes it destructive: confirm the password so the database gets to refuse it.
     $this->withSession([PasswordConfirmation::SESSION_KEY => time()]);
 
-    queryAs($this, 'admin', ['sql' => str_replace('{schema}', $schema, $sql)])
+    queryAs($this, 'admin', ['sql' => str_replace('{schema}', $schema, $sql), 'confirm' => true])
         ->assertStatus(422)
         ->assertJsonStructure(['error' => ['message', 'sqlstate', 'position']]);
 

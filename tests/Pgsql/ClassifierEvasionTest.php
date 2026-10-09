@@ -16,6 +16,9 @@ use TacticalNinj4\DbExplorer\Tests\PgsqlTestCase;
 // transaction. Each case documents the classifier's verdict, then proves the
 // effect (a table `{schema}.evil`, or a server file read) never happened.
 
+/**
+ * POST $sql as $role, already confirmed (409) and password-confirmed (423).
+ */
 function evasionQuery(PgsqlTestCase $test, string $role, string $sql): TestResponse
 {
     DbExplorer::roleUsing(fn (): string => $role);
@@ -23,7 +26,7 @@ function evasionQuery(PgsqlTestCase $test, string $role, string $sql): TestRespo
     return $test->actingAs(makeUser())
         ->withSession(['_token' => 'csrf-test-token', 'auth.password_confirmed_at' => time()])
         ->withHeaders(['X-CSRF-TOKEN' => 'csrf-test-token'])
-        ->postJson('/dbexplorer/api/main/query', ['sql' => $sql]);
+        ->postJson('/dbexplorer/api/main/query', ['sql' => $sql, 'confirm' => true]);
 }
 
 function evilExists(string $schema): bool

@@ -40,9 +40,12 @@ function postAsRole(PgsqlTestCase $test, string $role, string $uri, array $body 
         ->postJson($uri, $body);
 }
 
-function writeQuery(PgsqlTestCase $test, string $role, string $sql): TestResponse
+/**
+ * Run $sql through the query API as $role, confirmed (`confirm: true`) unless $confirm is false.
+ */
+function writeQuery(PgsqlTestCase $test, string $role, string $sql, bool $confirm = true): TestResponse
 {
-    return postAsRole($test, $role, '/dbexplorer/api/main/query', ['sql' => $sql]);
+    return postAsRole($test, $role, '/dbexplorer/api/main/query', ['sql' => $sql] + ($confirm ? ['confirm' => true] : []));
 }
 
 beforeEach(function () {
@@ -83,7 +86,7 @@ it('S5 answers destructive SQL with 423 until the password is confirmed, then ru
 
     $this->postJson('/dbexplorer/api/confirm-password', ['password' => WRITER_PASSWORD])->assertNoContent();
 
-    $this->postJson('/dbexplorer/api/main/query', ['sql' => "DROP TABLE {$this->schema}.notes"])
+    $this->postJson('/dbexplorer/api/main/query', ['sql' => "DROP TABLE {$this->schema}.notes", 'confirm' => true])
         ->assertOk()
         ->assertJsonPath('data.classification', 'destructive');
 
@@ -96,7 +99,7 @@ it('S5 asks an editor to confirm a DELETE or UPDATE without WHERE', function (st
     expect(notesLeft($this->schema))->toBe(3);
 
     $this->withSession(['auth.password_confirmed_at' => time()])
-        ->postJson('/dbexplorer/api/main/query', ['sql' => str_replace('{schema}', $this->schema, $sql)])
+        ->postJson('/dbexplorer/api/main/query', ['sql' => str_replace('{schema}', $this->schema, $sql), 'confirm' => true])
         ->assertOk()
         ->assertJsonPath('data.classification', 'destructive');
 
@@ -113,7 +116,7 @@ it('S5 asks a viewer to confirm destructive SQL too, and the read-only transacti
     writeQuery($this, 'viewer', "DELETE FROM {$this->schema}.notes")->assertStatus(423);
 
     $this->withSession(['auth.password_confirmed_at' => time()])
-        ->postJson('/dbexplorer/api/main/query', ['sql' => "DELETE FROM {$this->schema}.notes"])
+        ->postJson('/dbexplorer/api/main/query', ['sql' => "DELETE FROM {$this->schema}.notes", 'confirm' => true])
         ->assertStatus(422)
         ->assertJsonPath('error.sqlstate', '25006');
 
@@ -126,6 +129,41 @@ it('S5 skips the confirmation while dbexplorer.confirm_password is false', funct
     writeQuery($this, 'editor', "DELETE FROM {$this->schema}.notes")->assertOk();
 
     expect(notesLeft($this->schema))->toBe(0);
+});
+
+it('asks to confirm anything the classifier does not call a read with 409, running nothing', function (string $role, string $sql, string $class) {
+    writeQuery($this, $role, str_replace('{schema}', $this->schema, $sql), false)
+        ->assertStatus(409)
+        ->assertExactJson(['error' => [
+            'message' => "This statement looks like {$class} SQL. Confirm to run it.",
+            'code' => 'confirmation_required',
+            'classification' => $class,
+        ]]);
+
+    expect(notesLeft($this->schema))->toBe(3)
+        ->and(DB::connection('pgsql_super')->table("{$this->schema}.notes")->where('body', 'x')->count())->toBe(0)
+        ->and(AuditEntry::query()->where('action', 'query')->count())->toBe(0);
+})->with([
+    'editor dml' => ['editor', "UPDATE {schema}.notes SET body = 'x' WHERE id = 1", 'dml'],
+    'editor destructive' => ['editor', 'DELETE FROM {schema}.notes', 'destructive'],
+    'editor unknown' => ['editor', 'LOCK TABLE {schema}.notes', 'unknown'],
+    'admin ddl' => ['admin', 'CREATE TABLE {schema}.made (id int)', 'ddl'],
+    'admin destructive' => ['admin', 'DROP TABLE {schema}.notes', 'destructive'],
+    'viewer dml' => ['viewer', "INSERT INTO {schema}.notes (body) VALUES ('x')", 'dml'],
+]);
+
+it('runs reads without asking to confirm', function (string $role) {
+    writeQuery($this, $role, "SELECT count(*) FROM {$this->schema}.notes", false)
+        ->assertOk()
+        ->assertJsonPath('data.rows', [[3]]);
+})->with(['viewer', 'editor', 'admin']);
+
+it('asks to confirm before asking for the password, and forbids DDL before either', function () {
+    writeQuery($this, 'editor', "DELETE FROM {$this->schema}.notes", false)->assertStatus(409);
+    writeQuery($this, 'editor', "DELETE FROM {$this->schema}.notes")->assertStatus(423);
+    writeQuery($this, 'editor', "CREATE TABLE {$this->schema}.made (id int)", false)->assertForbidden();
+
+    expect(notesLeft($this->schema))->toBe(3);
 });
 
 it('does not ask to confirm a destructive statement that is only explained', function () {
@@ -196,7 +234,7 @@ it('fires DdlExecuted for committed destructive SQL, but not for reads, DML, fai
 
     Event::assertNotDispatched(DdlExecuted::class);
 
-    $this->postJson('/dbexplorer/api/main/query', ['sql' => "TRUNCATE {$this->schema}.notes"])->assertOk();
+    $this->postJson('/dbexplorer/api/main/query', ['sql' => "TRUNCATE {$this->schema}.notes", 'confirm' => true])->assertOk();
 
     Event::assertDispatched(DdlExecuted::class, fn (DdlExecuted $event): bool => $event->classification === 'destructive'
         && $event->sql === "TRUNCATE {$this->schema}.notes");

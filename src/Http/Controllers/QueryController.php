@@ -31,9 +31,15 @@ class QueryController
      * sqlstate, position}}`.
      *
      * Before running (M2.2), unless `explain` is set, the classifier's verdict
-     * gates the request for UX only (S11), the database grants being the real
-     * boundary: `ddl` is a 403 for non-admins, and `destructive` needs a
-     * recent password confirmation (S5), else 423.
+     * gates the request, for UX only (S11): the database grants and the
+     * viewer's read-only transaction are the real boundary.
+     *
+     * 1. `ddl` from a non-admin: 403.
+     * 2. Anything but `read` (so `unknown` too: the classifier can't vouch that
+     *    it only reads) without `confirm: true`: 409 `{error: {message, code:
+     *    'confirmation_required', classification}}`, nothing runs. The client
+     *    shows the classification, then re-sends with `confirm: true`.
+     * 3. `destructive` without a recent password confirmation (S5): 423.
      *
      * @throws QueryFailed
      */
@@ -56,6 +62,7 @@ class QueryController
             }],
             'explain' => ['sometimes', 'nullable', 'in:'.QueryRunner::EXPLAIN_PLAIN.','.QueryRunner::EXPLAIN_ANALYZE],
             'unmask' => ['sometimes', 'boolean'],
+            'confirm' => ['sometimes', 'boolean'],
         ]);
 
         $role = (string) $request->attributes->get(ResolveRole::ROLE);
@@ -67,6 +74,14 @@ class QueryController
             $classification = Classifier::classify((string) $input['sql']);
 
             abort_if($classification === Classifier::DDL && $role !== Role::ADMIN, 403, 'Only admins can run DDL (CREATE, ALTER, GRANT, ...).');
+
+            if ($classification !== Classifier::READ && ! (bool) ($input['confirm'] ?? false)) {
+                return new JsonResponse(['error' => [
+                    'message' => "This statement looks like {$classification} SQL. Confirm to run it.",
+                    'code' => 'confirmation_required',
+                    'classification' => $classification,
+                ]], 409);
+            }
 
             if ($classification === Classifier::DESTRUCTIVE) {
                 $confirmation->ensureConfirmed($request);
