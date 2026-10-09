@@ -6,6 +6,7 @@ namespace TacticalNinj4\DbExplorer\Models;
 
 use Illuminate\Auth\AuthManager;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -14,6 +15,7 @@ use InvalidArgumentException;
 use TacticalNinj4\DbExplorer\Events\RunFinished;
 use TacticalNinj4\DbExplorer\Facades\DbExplorer;
 use TacticalNinj4\DbExplorer\Http\Middleware\ResolveRole;
+use TacticalNinj4\DbExplorer\Role;
 
 /**
  * One piece of background work (PRD §7.5): a background query, export, import,
@@ -198,14 +200,36 @@ class Run extends Model
     }
 
     /**
+     * The runs the request's user can see on their label (PRD §7.5): their
+     * own, and every run for the label's admin.
+     *
+     * @param  Builder<Run>  $query
+     * @return Builder<Run>
+     */
+    public function scopeVisibleTo(Builder $query, Request $request): Builder
+    {
+        $query->where('label', (string) $request->attributes->get(ResolveRole::LABEL));
+
+        if ($request->attributes->get(ResolveRole::ROLE) === Role::ADMIN) {
+            return $query;
+        }
+
+        $id = $request->user()?->getAuthIdentifier();
+
+        return is_scalar($id) ? $query->where('user_id', (string) $id) : $query->whereRaw('1 = 0');
+    }
+
+    /**
      * The run as the API shows it. Never the result's disk or path, the
-     * backend pid or meta (which can hold SQL and bound values).
+     * backend pid or meta (which can hold SQL and bound values) — except the
+     * per-statement outcomes a script run keeps in `meta.statements`, reduced
+     * to `{line, status, duration_ms, affected}`: no SQL text.
      *
      * @return array<string, mixed>
      */
     public function toApi(): array
     {
-        return [
+        $api = [
             'id' => $this->id,
             'type' => $this->type,
             'status' => $this->status,
@@ -220,5 +244,18 @@ class Run extends Model
             'started_at' => $this->started_at?->toIso8601String(),
             'finished_at' => $this->finished_at?->toIso8601String(),
         ];
+
+        foreach ((array) ($this->meta['statements'] ?? []) as $statement) {
+            if (is_array($statement)) {
+                $api['statements'][] = [
+                    'line' => (int) ($statement['line'] ?? 0),
+                    'status' => (string) ($statement['status'] ?? 'skipped'),
+                    'duration_ms' => isset($statement['duration_ms']) && is_numeric($statement['duration_ms']) ? (float) $statement['duration_ms'] : null,
+                    'affected' => isset($statement['affected']) && is_numeric($statement['affected']) ? (int) $statement['affected'] : null,
+                ];
+            }
+        }
+
+        return $api;
     }
 }

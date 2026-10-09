@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace TacticalNinj4\DbExplorer;
 
 use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
@@ -47,6 +49,16 @@ class DbExplorerServiceProvider extends ServiceProvider
         $this->loadTranslationsFrom(__DIR__.'/../lang', 'dbexplorer');
 
         $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
+
+        // Exports and other run results carry real data: a disk that serves
+        // by URL (S16) defeats the signed-download check around them.
+        $this->warnAboutPublicDisk();
+
+        // The host's `schedule:run` prunes runs, history, files and audit
+        // entries daily; nothing here needs its own cron entry.
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+            $schedule->command('dbx:prune')->daily();
+        });
 
         if (! $this->app->runningInConsole()) {
             return;
@@ -111,5 +123,25 @@ class DbExplorerServiceProvider extends ServiceProvider
         $user = $request->user();
 
         return $user !== null ? 'user:'.$user->getAuthIdentifier() : 'ip:'.$request->ip();
+    }
+
+    /**
+     * Warn, once per boot, when the storage disk for run results is public:
+     * its files would be downloadable by guessing or leaking a URL, whatever
+     * the signed route around them checks (S16).
+     */
+    protected function warnAboutPublicDisk(): void
+    {
+        $disk = config('dbexplorer.storage.disk');
+
+        if (! is_string($disk) || $disk === '') {
+            $disk = 'local';
+        }
+
+        $config = config("filesystems.disks.{$disk}");
+
+        if (is_array($config) && (($config['driver'] ?? null) === 'public' || ($config['visibility'] ?? null) === 'public')) {
+            Log::warning("The DbExplorer storage disk [{$disk}] is public: run results (exports) would be reachable by URL. Point dbexplorer.storage.disk at a private disk.");
+        }
     }
 }

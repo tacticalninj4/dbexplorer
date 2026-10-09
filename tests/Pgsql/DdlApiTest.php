@@ -4,14 +4,18 @@ declare(strict_types=1);
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Testing\TestResponse;
 use TacticalNinj4\DbExplorer\Drivers\Postgres\QueryRunner;
 use TacticalNinj4\DbExplorer\Events\DdlExecuted;
 use TacticalNinj4\DbExplorer\Events\QueryExecuted;
 use TacticalNinj4\DbExplorer\Exceptions\QueryFailed;
 use TacticalNinj4\DbExplorer\Facades\DbExplorer;
+use TacticalNinj4\DbExplorer\Jobs\RunScript;
 use TacticalNinj4\DbExplorer\Models\AuditEntry;
 use TacticalNinj4\DbExplorer\Models\QueryHistory;
+use TacticalNinj4\DbExplorer\Models\Run;
+use TacticalNinj4\DbExplorer\Models\RunStatus;
 use TacticalNinj4\DbExplorer\Tests\PgsqlTestCase;
 
 // M2.4: POST api/{label}/ddl/preview and ddl/execute.
@@ -186,17 +190,58 @@ it('does not ask to confirm a non-destructive operation', function () {
     expect(relationExists("{$this->schema}.memos"))->toBeTrue();
 });
 
-it('answers CONCURRENTLY with 409 until background jobs exist, without running or confirming', function (array $op) {
-    ddlAs($this, 'admin', 'execute', $op + ['schema' => $this->schema], false)
-        ->assertStatus(409)
-        ->assertJsonPath('message', 'This operation cannot run in a transaction and needs a background job, which is not available yet.');
+it('queues CONCURRENTLY operations as a step-mode script run instead of running them', function () {
+    Queue::fake();
 
-    expect(AuditEntry::query()->count())->toBe(0)
+    $data = ddlAs($this, 'admin', 'execute', ['op' => 'create_index', 'table' => 'notes', 'name' => 'notes_body_idx', 'columns' => ['body'], 'concurrently' => true, 'schema' => $this->schema], false)
+        ->assertStatus(202)
+        ->json('data');
+
+    $run = Run::query()->sole();
+
+    expect($run->type)->toBe('script')
+        ->and($run->status)->toBe(RunStatus::QUEUED)
+        ->and($run->meta['mode'])->toBe('step')
+        ->and($run->meta['source'])->toBe('ddl')
+        ->and($run->meta['sql'])->toBe($data['statements'][0]['sql'])
+        ->and($data['run']['id'])->toBe($run->id)
+        ->and($data['statements'])->toHaveCount(1)
         ->and(relationExists("{$this->schema}.notes_body_idx"))->toBeFalse();
-})->with([
-    'create index' => [['op' => 'create_index', 'table' => 'notes', 'name' => 'notes_body_idx', 'columns' => ['body'], 'concurrently' => true]],
-    'drop index' => [['op' => 'drop_index', 'name' => 'notes_pkey', 'concurrently' => true]],
-]);
+
+    Queue::assertPushed(RunScript::class, fn (RunScript $job): bool => $job->runId === $run->id);
+});
+
+it('runs the queued CONCURRENTLY statement outside any transaction', function () {
+    createUsers(1);
+
+    ddlAs($this, 'admin', 'execute', ['op' => 'create_index', 'table' => 'notes', 'name' => 'notes_body_idx', 'columns' => ['body'], 'concurrently' => true, 'schema' => $this->schema], false)
+        ->assertStatus(202);
+
+    $run = Run::query()->sole();
+
+    // Testbench's sync queue already ran the job inside the request; a second
+    // handle() must skip the finished run.
+    app()->call([new RunScript($run->id), 'handle']);
+
+    expect($run->refresh()->status)->toBe(RunStatus::SUCCEEDED)
+        ->and(relationExists("{$this->schema}.notes_body_idx"))->toBeTrue()
+        ->and(AuditEntry::query()->where('action', 'script')->value('outcome'))->toBe('success');
+});
+
+it('S5 still demands a password confirmation before queueing destructive CONCURRENTLY operations', function () {
+    Queue::fake();
+
+    ddlAs($this, 'admin', 'execute', ['op' => 'drop_index', 'name' => 'notes_pkey', 'concurrently' => true, 'schema' => $this->schema], false)
+        ->assertStatus(423)
+        ->assertExactJson(['message' => 'Password confirmation required.']);
+
+    expect(Run::query()->count())->toBe(0);
+
+    ddlAs($this, 'admin', 'execute', ['op' => 'drop_index', 'name' => 'notes_pkey', 'concurrently' => true, 'schema' => $this->schema])
+        ->assertStatus(202);
+
+    expect(Run::query()->sole()->meta['mode'])->toBe('step');
+});
 
 it('rolls back the first statement when the second fails, and reports which one failed', function () {
     // Fail every COMMENT in this database, so the CREATE TABLE before it must roll back.

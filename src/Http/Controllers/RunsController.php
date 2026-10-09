@@ -8,9 +8,12 @@ use Illuminate\Database\DatabaseManager;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Date;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\URL;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use TacticalNinj4\DbExplorer\DbExplorer;
 use TacticalNinj4\DbExplorer\Exceptions\ConnectionNotAllowedException;
-use TacticalNinj4\DbExplorer\Http\Middleware\ResolveRole;
 use TacticalNinj4\DbExplorer\Models\Run;
 use TacticalNinj4\DbExplorer\Models\RunStatus;
 use TacticalNinj4\DbExplorer\Role;
@@ -92,6 +95,47 @@ class RunsController
     }
 
     /**
+     * A 10-minute signed URL for a finished run's result file (S16, PRD
+     * §7.5). The signed route re-checks the requester, so a shared or leaked
+     * link stops working with the signature.
+     */
+    public function download(Request $request, string $label, string $run): JsonResponse
+    {
+        $model = $this->findRun($request, $run);
+
+        abort_unless($model->hasResult(), 404);
+
+        return new JsonResponse(['data' => [
+            'url' => URL::temporarySignedRoute('dbexplorer.runs.file', Date::now()->addMinutes(10), ['run' => $model->id]),
+            'expires_at' => Date::now()->addMinutes(10)->toIso8601String(),
+        ]]);
+    }
+
+    /**
+     * The result file itself, behind a valid signature and the requester
+     * check from the download route: the owner, or an admin of the run's
+     * label (PRD §7.5). Anything else is a 404, so run ids can't be probed.
+     *
+     * @return StreamedResponse
+     */
+    public function file(Request $request, DbExplorer $explorer, string $run)
+    {
+        abort_unless(ctype_digit($run), 404);
+
+        $model = Run::query()->whereKey((int) $run)->first();
+
+        abort_unless($model instanceof Run && $model->hasResult(), 404);
+
+        $user = $request->user();
+        $id = $user?->getAuthIdentifier();
+        $admin = $user !== null && $explorer->roleFor($user, (string) $model->label) === Role::ADMIN;
+
+        abort_unless(($model->user_id !== null && is_scalar($id) && (string) $id === $model->user_id) || $admin, 404);
+
+        return Storage::disk((string) $model->result_disk)->download($model->result_path, 'dbx-'.basename((string) $model->result_path));
+    }
+
+    /**
      * Cancel the run's current statement. Only backends of the same database
      * login are touched, so a pid reused by someone else's session is safe.
      */
@@ -115,15 +159,7 @@ class RunsController
      */
     private function visibleRuns(Request $request): Builder
     {
-        $query = Run::query()->where('label', (string) $request->attributes->get(ResolveRole::LABEL));
-
-        if ($request->attributes->get(ResolveRole::ROLE) === Role::ADMIN) {
-            return $query;
-        }
-
-        $id = $request->user()?->getAuthIdentifier();
-
-        return is_scalar($id) ? $query->where('user_id', (string) $id) : $query->whereRaw('1 = 0');
+        return Run::query()->visibleTo($request);
     }
 
     private function findRun(Request $request, string $id): Run
