@@ -56,66 +56,26 @@ final class Classifier
     }
 
     /**
-     * Split SQL on top-level semicolons and classify each statement. Semicolons
-     * inside parentheses, strings, comments, dollar quotes and `BEGIN ATOMIC … END`
-     * bodies do not split. Statements that are empty or only comments are skipped.
+     * Split SQL on top-level semicolons and classify each statement. Splitting is
+     * ScriptSplitter's lenient mode: semicolons inside parentheses, strings,
+     * comments, dollar quotes and `BEGIN ATOMIC … END` bodies do not split, and
+     * statements that are empty or only comments are skipped. It never throws.
      *
      * @return list<array{sql: string, offset: int, class: string}>
      */
     public static function statements(string $sql): array
     {
         $statements = [];
-        $words = [];
-        $start = null;
-        $end = 0;
-        $depth = 0;
-        $atomic = 0;
-        $previous = '';
 
-        foreach (Lexer::tokens($sql) as $token) {
-            if ($token['type'] === Lexer::WHITESPACE) {
-                continue;
+        foreach (ScriptSplitter::scan($sql) as $statement) {
+            $words = [];
+            $previous = '';
+
+            foreach ($statement['tokens'] as $token) {
+                $previous = $words[] = self::compact($token, $previous);
             }
 
-            if ($token['type'] === Lexer::SEMICOLON && $depth === 0 && $atomic === 0) {
-                if ($words !== [] && $start !== null) {
-                    $statements[] = ['sql' => substr($sql, $start, $end - $start), 'offset' => $start, 'class' => self::classifyRange($words, 0, count($words))];
-                }
-
-                $words = [];
-                $start = null;
-                $previous = '';
-
-                continue;
-            }
-
-            $start = $start ?? $token['offset'];
-            $end = $token['offset'] + strlen($token['text']);
-
-            if (Lexer::isTrivia($token)) {
-                continue;
-            }
-
-            $word = self::compact($token, $previous);
-
-            if ($word === '(') {
-                $depth++;
-            } elseif ($word === ')') {
-                $depth = max(0, $depth - 1);
-            } elseif ($word === 'ATOMIC' && $previous === 'BEGIN' && ($words[0] ?? '') === 'CREATE') {
-                $atomic = 1;
-            } elseif ($atomic > 0 && $word === 'CASE') {
-                $atomic++;
-            } elseif ($atomic > 0 && $word === 'END') {
-                $atomic--;
-            }
-
-            $words[] = $word;
-            $previous = $word;
-        }
-
-        if ($words !== [] && $start !== null) {
-            $statements[] = ['sql' => substr($sql, $start, $end - $start), 'offset' => $start, 'class' => self::classifyRange($words, 0, count($words))];
+            $statements[] = ['sql' => $statement['sql'], 'offset' => $statement['offset'], 'class' => self::classifyRange($words, 0, count($words))];
         }
 
         return $statements;
