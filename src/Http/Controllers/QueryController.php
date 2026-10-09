@@ -12,6 +12,8 @@ use TacticalNinj4\DbExplorer\Exceptions\QueryFailed;
 use TacticalNinj4\DbExplorer\Http\Middleware\ResolveRole;
 use TacticalNinj4\DbExplorer\Models\QueryHistory;
 use TacticalNinj4\DbExplorer\Role;
+use TacticalNinj4\DbExplorer\Security\PasswordConfirmation;
+use TacticalNinj4\DbExplorer\Sql\Classifier;
 
 /**
  * The SQL editor API (PRD §7.3): run one statement through the QueryRunner,
@@ -28,9 +30,14 @@ class QueryController
      * and audits every run; a database error is a 422 `{error: {message,
      * sqlstate, position}}`.
      *
+     * Before running (M2.2), unless `explain` is set, the classifier's verdict
+     * gates the request for UX only (S11), the database grants being the real
+     * boundary: `ddl` is a 403 for non-admins, and `destructive` needs a
+     * recent password confirmation (S5), else 423.
+     *
      * @throws QueryFailed
      */
-    public function run(Request $request, QueryRunner $runner): JsonResponse
+    public function run(Request $request, QueryRunner $runner, PasswordConfirmation $confirmation): JsonResponse
     {
         $input = $request->validate([
             'sql' => ['required', 'string', 'max:'.(int) config('dbexplorer.limits.sql_length', 100000)],
@@ -55,6 +62,16 @@ class QueryController
         $unmask = (bool) ($input['unmask'] ?? false);
 
         abort_if($unmask && $role !== Role::ADMIN, 403, 'Only admins can unmask columns.');
+
+        if (($input['explain'] ?? null) === null) {
+            $classification = Classifier::classify((string) $input['sql']);
+
+            abort_if($classification === Classifier::DDL && $role !== Role::ADMIN, 403, 'Only admins can run DDL (CREATE, ALTER, GRANT, ...).');
+
+            if ($classification === Classifier::DESTRUCTIVE) {
+                $confirmation->ensureConfirmed($request);
+            }
+        }
 
         /** @var array<int|string, scalar|null> $bindings */
         $bindings = $input['bindings'] ?? [];

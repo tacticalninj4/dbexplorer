@@ -8,6 +8,7 @@ use TacticalNinj4\DbExplorer\Facades\DbExplorer;
 use TacticalNinj4\DbExplorer\Models\AuditEntry;
 use TacticalNinj4\DbExplorer\Models\QueryHistory;
 use TacticalNinj4\DbExplorer\Security\Masker;
+use TacticalNinj4\DbExplorer\Security\PasswordConfirmation;
 use TacticalNinj4\DbExplorer\Tests\PgsqlFixture;
 use TacticalNinj4\DbExplorer\Tests\PgsqlTestCase;
 
@@ -74,6 +75,9 @@ it('S9 answers a viewer UPDATE with 422 and SQLSTATE 25006, even on a login with
 it('S8 rejects multiple statements with 422 and runs none of them', function (string $sql) {
     $schema = $this->scratchSchema();
     DB::connection('pgsql_admin')->statement("CREATE TABLE {$schema}.keep (id int)");
+
+    // The DROP makes it destructive: confirm the password so the database gets to refuse it.
+    $this->withSession([PasswordConfirmation::SESSION_KEY => time()]);
 
     queryAs($this, 'admin', ['sql' => str_replace('{schema}', $schema, $sql)])
         ->assertStatus(422)
