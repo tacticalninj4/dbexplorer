@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace TacticalNinj4\DbExplorer\Http\Controllers;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use TacticalNinj4\DbExplorer\DbExplorer;
 use TacticalNinj4\DbExplorer\Http\Middleware\ResolveRole;
 use TacticalNinj4\DbExplorer\Models\AuditEntry;
 use TacticalNinj4\DbExplorer\Role;
@@ -15,12 +17,18 @@ use TacticalNinj4\DbExplorer\Role;
  * paginated, filterable by user, label, action, classification and date.
  * The entries are what the append-only log already holds (S17–S19); SQL is
  * masked text, and meta carries counts, never bound values.
+ *
+ * Being admin on the URL's label opens the viewer; the rows are limited to
+ * the labels the user is admin on (DbExplorer::roleFor). Rows without a
+ * label (e.g. password confirmations) only show to a user who is admin on
+ * every configured label. A `label` filter outside that set matches
+ * nothing: an empty page, the same answer as a label with no entries.
  */
 class AuditController
 {
     public const PER_PAGE = 50;
 
-    public function __invoke(Request $request): JsonResponse
+    public function __invoke(Request $request, DbExplorer $explorer): JsonResponse
     {
         abort_unless((string) $request->attributes->get(ResolveRole::ROLE) === Role::ADMIN, 403, 'Only admins can read the audit log.');
 
@@ -37,7 +45,17 @@ class AuditController
 
         $page = (int) ($input['page'] ?? 1);
 
-        $entries = AuditEntry::query();
+        $user = $request->user();
+        $labels = $explorer->labels();
+        $adminLabels = array_values(array_filter($labels, fn (string $label): bool => $explorer->roleFor($user, $label) === Role::ADMIN));
+
+        $entries = AuditEntry::query()->where(function (Builder $query) use ($labels, $adminLabels): void {
+            $query->whereIn('label', $adminLabels);
+
+            if (count($adminLabels) === count($labels)) {
+                $query->orWhereNull('label');
+            }
+        });
 
         foreach ([
             ['user_id', 'where', 'user_id'],

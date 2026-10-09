@@ -80,6 +80,7 @@ Route::prefix('api/{label}')->middleware('throttle:dbexplorer')->group(function 
     Route::get('schedules', [ScheduleController::class, 'index'])->name('schedules');
     Route::post('schedules', [ScheduleController::class, 'store'])->name('schedules.store');
     Route::patch('schedules/{schedule}', [ScheduleController::class, 'update'])->name('schedules.update');
+    Route::post('schedules/{schedule}/resync', [ScheduleController::class, 'resync'])->name('schedules.resync');
     Route::delete('schedules/{schedule}', [ScheduleController::class, 'destroy'])->name('schedules.destroy');
     Route::get('backups', [BackupController::class, 'index'])->name('backups');
     Route::post('backups', [BackupController::class, 'store'])->name('backups.store');

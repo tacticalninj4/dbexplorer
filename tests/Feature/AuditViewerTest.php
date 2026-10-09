@@ -85,3 +85,39 @@ it('shows the entry as stored, hash chain fields excluded', function () {
         ->and($data)->not->toHaveKey('hash')
         ->and($data)->not->toHaveKey('prev_hash');
 });
+
+it('S17 shows only rows from labels the user is admin on, whatever the filters', function () {
+    config(['dbexplorer.connections.prod' => ['viewer' => 'pgsql_readonly', 'admin' => 'pgsql']]);
+
+    entry(['label' => 'main', 'user_id' => '1']);
+    entry(['label' => 'prod', 'user_id' => '1', 'sql' => 'SELECT secret FROM prod_only']);
+    entry(['label' => null, 'action' => 'password_confirm', 'user_id' => '1']);
+
+    // admin on main, no role on prod
+    DbExplorer::roleUsing(fn ($user, string $label): ?string => $label === 'main' ? 'admin' : null);
+
+    $labels = fn (string $query): array => array_column(
+        $this->actingAs(makeUser())->getJson('/dbexplorer/api/main/audit'.($query === '' ? '' : "?{$query}"))->assertOk()->json('data'),
+        'label',
+    );
+
+    expect($labels(''))->toBe(['main'])
+        ->and($labels('label=prod'))->toBe([])
+        ->and($labels('user_id=1'))->toBe(['main'])
+        ->and($labels('classification=read&action=*'))->toBe(['main'])
+        ->and($labels('action=password_confirm'))->toBe([]);
+
+    $this->actingAs(makeUser())->getJson('/dbexplorer/api/prod/audit')->assertForbidden();
+
+    // a viewer on prod is no admin there either
+    DbExplorer::roleUsing(fn ($user, string $label): string => $label === 'main' ? 'admin' : 'viewer');
+
+    expect($labels(''))->toBe(['main'])
+        ->and($labels('label=prod'))->toBe([]);
+
+    // admin on every label: every row, the label-less ones too
+    DbExplorer::roleUsing(fn (): string => 'admin');
+
+    expect($labels(''))->toBe([null, 'prod', 'main'])
+        ->and($labels('label=prod'))->toBe(['prod']);
+});

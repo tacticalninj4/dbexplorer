@@ -10,9 +10,9 @@ use Illuminate\Console\Command;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Support\Facades\Cache;
 use TacticalNinj4\DbExplorer\DbExplorer as Explorer;
-use TacticalNinj4\DbExplorer\Facades\DbExplorer;
 use TacticalNinj4\DbExplorer\Jobs\RunScheduledQuery;
 use TacticalNinj4\DbExplorer\Models\Run;
+use TacticalNinj4\DbExplorer\Models\RunStatus;
 use TacticalNinj4\DbExplorer\Models\Schedule;
 use TacticalNinj4\DbExplorer\Role;
 use Throwable;
@@ -24,9 +24,11 @@ use Throwable;
  * lock that lives as long as the background timeout, so a slow run is
  * never dispatched twice.
  *
- * A creator who has lost the admin role gets their schedule disabled here,
- * audited — the job's own role re-check still guards whatever a minute of
- * drift could dispatch.
+ * A schedule runs as the admin who approved its SQL snapshot. One without
+ * an approved snapshot (e.g. from before snapshots existed) is disabled and
+ * audited. One whose approver lost the admin role gets a failed run, is
+ * disabled and audited, and fires ScheduleFailed — the job's own role
+ * re-check still guards whatever a minute of drift could dispatch.
  */
 class ScheduleTickCommand extends Command
 {
@@ -40,6 +42,8 @@ class ScheduleTickCommand extends Command
      */
     protected $description = 'Dispatch the scheduled DbExplorer queries that are due';
 
+    public const DEMOTED = 'Permission changed: the schedule\'s approver no longer has the admin role.';
+
     public function handle(): int
     {
         $dispatched = 0;
@@ -49,24 +53,16 @@ class ScheduleTickCommand extends Command
                 continue;
             }
 
-            if (! $this->creatorIsAdmin($schedule)) {
-                $schedule->update(['enabled' => false]);
-                DbExplorer::audit([
-                    'action' => 'schedule.disabled',
-                    'user_id' => $schedule->user_id,
-                    'label' => $schedule->savedQuery->label,
-                    'outcome' => 'error',
-                    'error' => 'The creator no longer has the admin role.',
-                    'meta' => ['schedule_id' => $schedule->id, 'saved_query_id' => $schedule->saved_query_id],
-                ]);
-                $this->line("Disabled schedule #{$schedule->id}: its creator is no longer an admin.");
+            if (! $schedule->isApproved()) {
+                $schedule->disable(RunScheduledQuery::UNAPPROVED);
+                $this->line("Disabled schedule #{$schedule->id}: it has no approved SQL.");
 
                 continue;
             }
 
             // The lock expires with the background timeout, so a crashed
-            // worker can't wedge the schedule forever.
-            $lock = Cache::lock("dbx:schedule:{$schedule->id}", max(60, (int) config('dbexplorer.limits.background.timeout', 3600)));
+            // worker can't wedge the schedule forever; the job releases it.
+            $lock = Cache::lock(RunScheduledQuery::lockName($schedule->id), max(60, (int) config('dbexplorer.limits.background.timeout', 3600)));
 
             if (! $lock->get()) {
                 continue;
@@ -74,17 +70,28 @@ class ScheduleTickCommand extends Command
 
             $provider = config('auth.guards.'.app(AuthManager::class)->getDefaultDriver().'.provider');
 
+            // The schedule runs as the admin who approved its SQL.
             $run = Run::query()->create([
                 'type' => RunScheduledQuery::TYPE,
-                'user_id' => $schedule->user_id,
+                'user_id' => (string) $schedule->approved_by,
                 'label' => $schedule->savedQuery->label,
                 'role' => Role::ADMIN,
                 'meta' => [Run::USER_PROVIDER => is_string($provider) ? $provider : null, 'schedule_id' => $schedule->id],
             ]);
 
-            RunScheduledQuery::dispatch($run->id);
-
             $schedule->update(['last_run_at' => now(), 'last_run_id' => $run->id]);
+
+            if (! $this->approverIsAdmin($schedule, $provider)) {
+                $run->finish(RunStatus::FAILED, self::DEMOTED);
+                $lock->release();
+                $schedule->disable(self::DEMOTED, $run->id);
+                RunScheduledQuery::reportFailure($schedule, $run);
+                $this->line("Disabled schedule #{$schedule->id}: its approver is no longer an admin.");
+
+                continue;
+            }
+
+            RunScheduledQuery::dispatch($run->id);
             $dispatched++;
         }
 
@@ -109,17 +116,16 @@ class ScheduleTickCommand extends Command
     }
 
     /**
-     * The creator, resolved through the default guard's provider, still has
+     * The approver, resolved through the default guard's provider, still has
      * the admin role on the schedule's label.
      */
-    private function creatorIsAdmin(Schedule $schedule): bool
+    private function approverIsAdmin(Schedule $schedule, mixed $provider): bool
     {
-        $provider = config('auth.guards.'.app(AuthManager::class)->getDefaultDriver().'.provider');
         $user = is_string($provider)
-            ? app(AuthManager::class)->createUserProvider($provider)?->retrieveById($schedule->user_id)
+            ? app(AuthManager::class)->createUserProvider($provider)?->retrieveById((string) $schedule->approved_by)
             : null;
 
         return $user instanceof Authenticatable
-            && app(Explorer::class)->roleFor($user, (string) $schedule->savedQuery->label) === Role::ADMIN;
+            && app(Explorer::class)->roleFor($user, (string) $schedule->savedQuery?->label) === Role::ADMIN;
     }
 }
