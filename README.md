@@ -187,10 +187,10 @@ Other publishable resources: `--tag=dbexplorer-migrations`, `dbexplorer-views` a
 | Milestone | Scope | Status |
 |---|---|---|
 | M0 | Config, routing, gate, IP allowlist, roles, audit log, app shell, `dbx:install` | Built |
-| M1 | Object browser, read-only data grid and SQL editor, EXPLAIN, hidden objects, masking, timeouts and row caps | Planned |
-| M2 | Inline row editing, DML and DDL, password re-confirmation for destructive actions | Planned |
-| M3 | Background queries, exports, CSV import, script runner, signed downloads | Planned |
-| M4 | Saved and scheduled queries, backups, active sessions, audit log viewer | Planned |
+| M1 | Object browser, read-only data grid and SQL editor, EXPLAIN, hidden objects, masking, timeouts and row caps | Built |
+| M2 | Inline row editing, DML and DDL, password re-confirmation for destructive actions | Built |
+| M3 | Background queries, exports, CSV import, script runner, signed downloads | Built |
+| M4 | Saved and scheduled queries, backups, active sessions, audit log viewer | Built |
 
 The full plan is in [docs/PRD.md](docs/PRD.md).
 
