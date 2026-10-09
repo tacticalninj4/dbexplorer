@@ -48,6 +48,9 @@ class Run extends Model
     /** The meta key holding the auth provider the user was resolved from. */
     public const USER_PROVIDER = 'user_provider';
 
+    /** At most this many of an import's rejected rows are in the API's `errors`. */
+    public const API_ERRORS = 100;
+
     protected $table = 'dbx_runs';
 
     /**
@@ -223,7 +226,10 @@ class Run extends Model
      * The run as the API shows it. Never the result's disk or path, the
      * backend pid or meta (which can hold SQL and bound values) — except the
      * per-statement outcomes a script run keeps in `meta.statements`, reduced
-     * to `{line, status, duration_ms, affected}`: no SQL text.
+     * to `{line, status, duration_ms, affected}`: no SQL text; and an
+     * import's `inserted` and `skipped` counts with its first API_ERRORS
+     * rejected rows as `errors: [{row, error}]`, the row number and the
+     * redacted server message: no cell values.
      *
      * @return array<string, mixed>
      */
@@ -252,6 +258,21 @@ class Run extends Model
                     'status' => (string) ($statement['status'] ?? 'skipped'),
                     'duration_ms' => isset($statement['duration_ms']) && is_numeric($statement['duration_ms']) ? (float) $statement['duration_ms'] : null,
                     'affected' => isset($statement['affected']) && is_numeric($statement['affected']) ? (int) $statement['affected'] : null,
+                ];
+            }
+        }
+
+        foreach (['inserted', 'skipped'] as $count) {
+            if (isset($this->meta[$count]) && is_numeric($this->meta[$count])) {
+                $api[$count] = (int) $this->meta[$count];
+            }
+        }
+
+        foreach (array_slice((array) ($this->meta['errors'] ?? []), 0, self::API_ERRORS) as $error) {
+            if (is_array($error)) {
+                $api['errors'][] = [
+                    'row' => (int) ($error['row'] ?? 0),
+                    'error' => is_string($error['error'] ?? null) ? $error['error'] : '',
                 ];
             }
         }

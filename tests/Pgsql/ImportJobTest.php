@@ -84,8 +84,9 @@ it('imports every row in transaction mode, and rolls the whole file back on one 
 
     $run = runImport($this, $bad, ['a', 'b']);
 
+    // The run names the row, not the value it held.
     expect($run->refresh()->status)->toBe(RunStatus::FAILED)
-        ->and($run->error)->toContain('22P02')
+        ->and($run->error)->toBe('22P02: Row 2: invalid input syntax for type integer: "?"')
         ->and(DB::connection('pgsql_super')->table("{$this->schema}.t")->count())->toBe(2); // the 3 rolled back
 });
 
@@ -99,10 +100,22 @@ it('skips and reports the bad rows in skip mode, keeping the good ones', functio
     expect($run->refresh()->status)->toBe(RunStatus::SUCCEEDED)
         ->and($run->meta['inserted'])->toBe(2)
         ->and($run->meta['skipped'])->toBe(2)
-        ->and(array_column($run->meta['errors'], 'row'))->toBe([2, 4])
-        ->and($run->meta['errors'][0]['error'])->toContain('invalid input syntax for type integer: "not-an-int"')
-        ->and($run->meta['errors'][1]['error'])->toContain('invalid input syntax for type integer: "also bad"')
         ->and($table->orderBy('a')->pluck('b')->all())->toBe(['one', 'three']);
+
+    // The run's page shows the counts and which rows were skipped and why:
+    // row numbers and messages, never the file's cell values.
+    $api = $this->actingAs(makeUser())
+        ->getJson("/dbexplorer/api/main/runs/{$run->id}")
+        ->assertOk()
+        ->assertJsonPath('data.inserted', 2)
+        ->assertJsonPath('data.skipped', 2)
+        ->assertJsonPath('data.errors', [
+            ['row' => 2, 'error' => '22P02: invalid input syntax for type integer: "?"'],
+            ['row' => 4, 'error' => '22P02: invalid input syntax for type integer: "?"'],
+        ]);
+
+    expect($api->getContent())->not->toContain('not-an-int')->not->toContain('also bad')
+        ->and(json_encode($run->meta))->not->toContain('not-an-int')->not->toContain('also bad');
 });
 
 it('keeps quoted commas, quotes and newlines intact', function () {
@@ -164,4 +177,15 @@ it('refuses a map naming a column the table does not have', function () {
         ->assertJsonValidationErrors('map');
 
     expect(Run::query()->count())->toBe(0);
+});
+
+it('caps the rejected rows the run API shows', function () {
+    $token = uploadImport($this, "a,b\n".implode("\n", array_map(fn (int $i): string => "bad{$i},x", range(1, Run::API_ERRORS + 5)))."\n");
+
+    $run = runImport($this, $token, ['a', 'b'], 'skip');
+
+    expect($run->refresh()->meta['skipped'])->toBe(Run::API_ERRORS + 5)
+        ->and($run->toApi()['skipped'])->toBe(Run::API_ERRORS + 5)
+        ->and($run->toApi()['errors'])->toHaveCount(Run::API_ERRORS)
+        ->and($run->toApi()['errors'][0])->toBe(['row' => 1, 'error' => '22P02: invalid input syntax for type integer: "?"']);
 });

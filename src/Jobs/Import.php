@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\Storage;
 use PDOException;
 use RuntimeException;
 use TacticalNinj4\DbExplorer\Drivers\Postgres\QueryRunner;
+use TacticalNinj4\DbExplorer\Exceptions\QueryFailed;
 use TacticalNinj4\DbExplorer\Exceptions\RunCancelled;
 use TacticalNinj4\DbExplorer\Jobs\Concerns\TracksRun;
 use TacticalNinj4\DbExplorer\Models\Run;
@@ -34,6 +35,10 @@ use TacticalNinj4\DbExplorer\Models\Run;
  *   to its savepoint and retries row by row, so only the truly bad rows are
  *   left out, recorded in `meta.errors` (`{row, error}`, at most 1000) with
  *   `meta.skipped` counting them all.
+ *
+ * Row errors, in `meta.errors` and in the run's error for a transaction-mode
+ * failure (`Row N: …`), carry the row number and the server's message with
+ * the row's values redacted: never the file's cell values.
  *
  * Identifiers were validated against the table's introspected columns at
  * dispatch; the job carries only the run id (S21). The editor floor was
@@ -86,6 +91,9 @@ final class Import implements ShouldQueue
             throw new RuntimeException('The uploaded file could not be read.');
         }
 
+        /** @var array{0: int, 1: list<scalar|null>}|null $failedRow */
+        $failedRow = null;
+
         try {
             if ($header && fgetcsv($handle, 0, ',', '"', '') === false) {
                 throw new RuntimeException('The uploaded file has no rows to import.');
@@ -96,7 +104,7 @@ final class Import implements ShouldQueue
             $skipped = 0;
             $rowNumber = 0;
 
-            app(QueryRunner::class)->atomic($connection, (string) $run->role, function (Closure $statement) use ($connection, $handle, $map, $emptyAsNull, $skipMode, $batchSize, $insertSql, &$errors, &$inserted, &$skipped, &$rowNumber): void {
+            app(QueryRunner::class)->atomic($connection, (string) $run->role, function (Closure $statement) use ($connection, $handle, $map, $emptyAsNull, $skipMode, $batchSize, $insertSql, &$errors, &$inserted, &$skipped, &$rowNumber, &$failedRow): void {
                 $this->trackBackend($statement);
 
                 $pdo = DB::connection($connection)->getPdo();
@@ -105,7 +113,7 @@ final class Import implements ShouldQueue
                 /** @var list<list<scalar|null>> $batch */
                 $batch = [];
 
-                $flush = function (int $rowNumber) use (&$batch, &$inserted, &$skipped, &$errors, $statement, $insert, $skipMode): void {
+                $flush = function (int $rowNumber) use (&$batch, &$inserted, &$skipped, &$errors, &$failedRow, $statement, $insert, $insertSql, $skipMode): void {
                     if ($batch === []) {
                         return;
                     }
@@ -113,8 +121,15 @@ final class Import implements ShouldQueue
                     $firstRow = $rowNumber - count($batch) + 1;
 
                     if (! $skipMode) {
-                        foreach ($batch as $values) {
-                            $insert->execute($values);
+                        foreach ($batch as $offset => $values) {
+                            try {
+                                $insert->execute($values);
+                            } catch (PDOException $rowError) {
+                                $failedRow = [$firstRow + $offset, $values];
+
+                                throw $rowError;
+                            }
+
                             $inserted++;
                         }
 
@@ -150,12 +165,9 @@ final class Import implements ShouldQueue
                                 $skipped++;
 
                                 if (count($errors) < self::MAX_ERRORS) {
-                                    $message = strtok($rowError->getMessage(), "\n");
-                                    $state = (string) $rowError->getCode();
-
                                     $errors[] = [
                                         'row' => $firstRow + $offset,
-                                        'error' => ($state !== '' ? $state.': ' : '').($message === false ? 'The row was rejected.' : $message),
+                                        'error' => self::rowError(QueryFailed::fromPdo($rowError, $insertSql), $values),
                                     ];
                                 }
                             }
@@ -184,9 +196,41 @@ final class Import implements ShouldQueue
             });
 
             $this->progress(100, ['inserted' => $inserted, 'skipped' => $skipped, 'errors' => $errors]);
+        } catch (QueryFailed $e) {
+            // Transaction mode: the file rolled back on this row. Say which
+            // one, without the values it held.
+            if ($failedRow === null) {
+                throw $e;
+            }
+
+            throw new QueryFailed('Row '.$failedRow[0].': '.self::rowError($e, $failedRow[1], false), $e->sqlState);
         } finally {
             fclose($handle);
         }
+    }
+
+    /**
+     * A rejected row's error for the run: the primary message only (DETAIL
+     * lines quote whole rows) with the row's own values, which PostgreSQL
+     * quotes as "value", replaced by "?". Row numbers and messages, never
+     * cell values: the run is visible to the label's admins too.
+     *
+     * @param  list<scalar|null>  $values
+     */
+    private static function rowError(QueryFailed $failure, array $values, bool $withState = true): string
+    {
+        $message = strtok($failure->getMessage(), "\n");
+        $message = $message === false ? 'The row was rejected.' : $message;
+
+        foreach ($values as $value) {
+            $text = is_bool($value) ? '' : (string) $value;
+
+            if ($text !== '') {
+                $message = str_replace('"'.$text.'"', '"?"', $message);
+            }
+        }
+
+        return ($withState && $failure->sqlState !== null ? $failure->sqlState.': ' : '').$message;
     }
 
     /**
