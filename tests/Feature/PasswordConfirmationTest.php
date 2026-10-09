@@ -165,14 +165,28 @@ it('S5 never writes the password to the audit log or its log channel', function 
         ->and($stored)->not->toContain($wrong)->not->toContain('correct-horse-battery-staple');
 });
 
-it('S5 cannot be confirmed by a user without a password, such as an SSO-only account', function () {
-    $this->actingAs(userWithPassword(null))
+it('S5 cannot be confirmed by a user without a password, such as an SSO-only account', function (?string $stored) {
+    // Raw, past the model's `hashed` cast: this is what the users table holds.
+    $user = makeUser(1);
+    $user->setRawAttributes(['password' => $stored] + $user->getAttributes());
+
+    // The hasher never sees the empty hash: on Laravel 10+ it throws
+    // "This password does not use the Bcrypt algorithm" (a 500).
+    Hash::shouldReceive('check')->never();
+
+    $this->actingAs($user)
         ->postJson('/dbexplorer/api/confirm-password', ['password' => ''])
         ->assertStatus(422);
 
-    $this->postJson('/dbexplorer/api/confirm-password', ['password' => 'anything'])->assertStatus(422);
+    $this->postJson('/dbexplorer/api/confirm-password', ['password' => 'anything'])
+        ->assertStatus(422)
+        ->assertJsonPath('errors.password', ['The provided password is incorrect.']);
+
     $this->postJson('/dbx-destructive')->assertStatus(423);
-});
+
+    expect(AuditEntry::query()->pluck('outcome', 'id')->values()->all())->toBe(['failure', 'failure'])
+        ->and(AuditEntry::query()->pluck('action')->unique()->all())->toBe(['password_confirm']);
+})->with(['null' => [null], 'empty' => ['']]);
 
 it('S5 skips confirmation entirely when dbexplorer.confirm_password is false', function () {
     config(['dbexplorer.confirm_password' => false]);

@@ -53,6 +53,16 @@ class ConfirmPasswordController
      */
     protected function check(Authenticatable $user, string $password): bool
     {
+        // No stored password (SSO-only): nothing to confirm against. Checked
+        // before any hasher sees it, which on Laravel 10+ throws for a hash
+        // it can't verify ("does not use the Bcrypt algorithm").
+        // Typed string, but a nullable column hands back null: cast it.
+        $hashed = (string) $user->getAuthPassword();
+
+        if ($hashed === '') {
+            return false;
+        }
+
         // The default driver is the guard that authenticated this request.
         $auth = app(AuthManager::class);
         $provider = config('auth.guards.'.$auth->getDefaultDriver().'.provider');
@@ -62,8 +72,6 @@ class ConfirmPasswordController
             return $provider->validateCredentials($user, ['password' => $password]);
         }
 
-        $hashed = (string) $user->getAuthPassword();
-
-        return $hashed !== '' && Hash::check($password, $hashed);
+        return Hash::check($password, $hashed);
     }
 }
