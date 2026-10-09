@@ -83,3 +83,27 @@ it('S7 never sends connection config to the browser', function (string $uri) {
         ->and($body)->not->toContain('pgsql_readonly')
         ->and($body)->not->toContain('staging_readonly');
 })->with(['shell' => '/dbexplorer', 'client route' => '/dbexplorer/main/tables/users', 'api/me' => '/dbexplorer/api/me']);
+
+it('warns when two roles of a label share a Laravel connection, naming only the label and roles', function () {
+    config(['dbexplorer.connections' => [
+        'main' => ['viewer' => 'pgsql', 'editor' => 'pgsql_editor', 'admin' => 'pgsql'],
+        'staging' => ['viewer' => 'staging', 'editor' => 'staging', 'admin' => 'staging'],
+        'reporting' => ['viewer' => 'reporting'],
+    ]]);
+
+    $body = $this->actingAs(makeUser())->getJson('/dbexplorer/api/me')->assertOk();
+
+    expect($body->json('warnings'))->toBe([
+        'On "main", the viewer and admin roles use the same database connection, so the database cannot enforce their different permissions. Map each role to its own connection and database login.',
+        'On "staging", the viewer, editor and admin roles use the same database connection, so the database cannot enforce their different permissions. Map each role to its own connection and database login.',
+    ])
+        ->and((string) $body->getContent())->not->toContain('pgsql')
+        ->and((string) $body->getContent())->not->toContain('"staging_');
+});
+
+it('does not warn about labels the user cannot use', function () {
+    config(['dbexplorer.connections.staging' => ['viewer' => 'staging', 'admin' => 'staging']]);
+    DbExplorer::roleUsing(fn (User $user, string $label): ?string => $label === 'main' ? 'viewer' : null);
+
+    $this->actingAs(makeUser())->getJson('/dbexplorer/api/me')->assertOk()->assertJsonPath('warnings', []);
+});
