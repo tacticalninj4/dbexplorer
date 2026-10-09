@@ -113,6 +113,21 @@ class DdlBuilder
     ];
 
     /**
+     * The shape a type string must have before validateType() sends it to the
+     * server: a name of one or two (optionally quoted) identifiers, then
+     * space-separated words (`with time zone`, `day to second`), each
+     * optionally followed by a typmod of one or two plain integers, then any
+     * number of `[]` or `[n]`. No other punctuation, no newlines.
+     */
+    public const TYPE_SHAPE = '/\A
+        (?:[\p{L}_][\p{L}\p{N}_$]*|"(?:[^"\x00-\x1F]|"")+")
+        (?:\.(?:[\p{L}_][\p{L}\p{N}_$]*|"(?:[^"\x00-\x1F]|"")+"))?
+        (?:\ *\(\ *\d+\ *(?:,\ *\d+\ *)?\))?
+        (?:\ +[A-Za-z_]+(?:\ *\(\ *\d+\ *(?:,\ *\d+\ *)?\))?)*
+        (?:\ *\[\ *\d*\ *\])*
+    \z/xu';
+
+    /**
      * @var Closure(string, string): string
      */
     protected Closure $resolveType;
@@ -170,6 +185,12 @@ class DdlBuilder
         }
 
         $type = trim($type);
+
+        // Defence in depth before the string reaches the server (and, before
+        // PostgreSQL 17, the SQL text of the probe): only the shape of a type name.
+        if (preg_match(self::TYPE_SHAPE, $type) !== 1) {
+            throw self::invalid($field, 'The type does not exist or is not a single type name.');
+        }
 
         try {
             $canonical = $connection->transaction(fn (): ?string => static::lookupType($connection, $type));

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use TacticalNinj4\DbExplorer\Drivers\Postgres\DdlBuilder;
 
@@ -387,4 +388,41 @@ it('returns no migration snippet when the operation is not simple', function (ar
     'table constraints' => [['op' => 'create_table', 'schema' => 'app', 'name' => 't', 'columns' => [['name' => 'a', 'type' => 'int']], 'constraints' => [['type' => 'unique', 'columns' => ['a']]]]],
     'array type' => [['op' => 'add_column', 'schema' => 'app', 'table' => 't', 'column' => ['name' => 'tags', 'type' => 'text[]']]],
     'identity that is not the primary key' => [['op' => 'add_column', 'schema' => 'app', 'table' => 't', 'column' => ['name' => 'n', 'type' => 'int', 'identity' => 'always']]],
+]);
+
+it('accepts type strings shaped like one type name', function (string $type) {
+    expect(preg_match(DdlBuilder::TYPE_SHAPE, $type))->toBe(1);
+})->with([
+    'int', 'INT4', 'varchar(255)', 'character varying(10)[]', 'numeric(10,2)', 'numeric( 10 , 2 )', 'text[]', 'int[][]', 'int[3]',
+    'timestamp with time zone', 'timestamp(3) without time zone', 'time(2) with time zone', 'double precision',
+    'bit varying(5)', 'interval day to second(3)', 'pg_catalog.bool', 'fixture.mood[]', '"fixture"."mood"', '"we""ird"', 'café.類型',
+]);
+
+it('S12 rejects type strings not shaped like one type name before querying the database', function (string $type) {
+    $queries = 0;
+    DB::listen(function () use (&$queries) {
+        $queries++;
+    });
+
+    expect(fn () => DdlBuilder::validateType(DB::connection(), $type))->toThrow(ValidationException::class)
+        ->and($queries)->toBe(0);
+})->with([
+    'subquery typmod' => 'varchar((select 1))',
+    'function typmod' => 'numeric(pg_sleep(1))',
+    'negative typmod' => 'numeric(-1)',
+    'second clause' => 'int, (select 1)',
+    'statement after a quoted name' => '"x"; select',
+    'statement after the type' => 'int; DROP TABLE x',
+    'closing paren and comment' => 'int) ; --',
+    'line comment' => 'int --',
+    'block comment' => 'int /* x */',
+    'array slice' => 'text[1:2]',
+    'unbalanced brackets' => 'text[]]',
+    'newline' => "timestamp\nwith time zone",
+    'newline injection' => "int\n; DROP TABLE x",
+    'NUL' => "int\0",
+    'NUL in a quoted name' => "\"a\0\"",
+    'three-part name' => 'a.b.c',
+    'cast' => 'int::text',
+    'empty quoted name' => '""',
 ]);

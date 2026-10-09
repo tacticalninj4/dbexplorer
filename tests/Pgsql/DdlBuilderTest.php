@@ -106,6 +106,28 @@ it('S12 rejects type strings that are not exactly one existing type', function (
     'NUL byte' => "int\0",
 ]);
 
+it('S12 rejects injection-shaped type strings without a query', function (string $type) {
+    $queries = 0;
+    DB::listen(function () use (&$queries) {
+        $queries++;
+    });
+
+    foreach (typeValidators() as $validator) {
+        expect(fn () => $validator::validateType(DB::connection('pgsql_admin'), $type))->toThrow(ValidationException::class);
+    }
+
+    expect($queries)->toBe(0);
+})->with([
+    'subquery typmod' => 'varchar((select 1))',
+    'function typmod' => 'numeric(pg_sleep(1))',
+    'second clause' => 'int, (select 1)',
+    'statement after a quoted name' => '"x"; select',
+    'array slice' => 'text[1:2]',
+    'line comment' => 'int --',
+    'block comment' => 'int /* x */',
+    'newline injection' => "int\n; DROP TABLE x",
+]);
+
 it('rejects a bad type without aborting the surrounding transaction', function () {
     $admin = DB::connection('pgsql_admin');
 
