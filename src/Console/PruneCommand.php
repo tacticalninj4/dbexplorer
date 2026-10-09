@@ -57,9 +57,11 @@ class PruneCommand extends Command
         try {
             $storage = Storage::disk($disk);
 
-            foreach ($storage->files('exports') as $file) {
-                if ($storage->lastModified($file) < $cutoff && $storage->delete($file)) {
-                    $deleted++;
+            foreach (['exports', 'imports'] as $directory) {
+                foreach ($storage->files($directory) as $file) {
+                    if ($storage->lastModified($file) < $cutoff && $storage->delete($file)) {
+                        $deleted++;
+                    }
                 }
             }
         } catch (Throwable) {

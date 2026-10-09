@@ -8,6 +8,7 @@ use TacticalNinj4\DbExplorer\Http\Controllers\AssetController;
 use TacticalNinj4\DbExplorer\Http\Controllers\ConfirmPasswordController;
 use TacticalNinj4\DbExplorer\Http\Controllers\DdlController;
 use TacticalNinj4\DbExplorer\Http\Controllers\ExportController;
+use TacticalNinj4\DbExplorer\Http\Controllers\ImportController;
 use TacticalNinj4\DbExplorer\Http\Controllers\MeController;
 use TacticalNinj4\DbExplorer\Http\Controllers\ObjectsController;
 use TacticalNinj4\DbExplorer\Http\Controllers\QueryController;
@@ -53,6 +54,9 @@ Route::prefix('api/{label}')->middleware('throttle:dbexplorer')->group(function 
     Route::post('query', [QueryController::class, 'run'])->name('query');
     Route::get('history', [QueryController::class, 'history'])->name('history');
     Route::post('export', ExportController::class)->name('export');
+    Route::post('imports', [ImportController::class, 'upload'])->name('imports.upload');
+    Route::post('imports/preview', [ImportController::class, 'preview'])->name('imports.preview');
+    Route::post('imports/run', [ImportController::class, 'run'])->name('imports.run');
     Route::post('ddl/preview', [DdlController::class, 'preview'])->name('ddl.preview');
     Route::post('ddl/execute', [DdlController::class, 'execute'])->name('ddl.execute');
     Route::get('runs', [RunsController::class, 'index'])->name('runs');
