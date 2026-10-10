@@ -6,6 +6,7 @@ import { formatNumber } from '../composables/format';
 import { findConnection } from '../composables/session';
 import type { Cell, Filter, RowsPage } from '../types';
 import DataGrid from './DataGrid.vue';
+import BaseIcon from './BaseIcon.vue';
 import RowEditor from './RowEditor.vue';
 
 /**
@@ -191,8 +192,10 @@ watch(
 
 <template>
     <div class="flex min-h-0 flex-1 flex-col">
-        <div v-if="error" role="alert" class="border-b border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-            {{ error }}
+        <div v-if="error" role="alert" class="dbx-banner border-danger-line bg-danger-bg text-danger-fg">
+            <BaseIcon name="alert-circle" />
+            <span class="flex-1">{{ error }}</span>
+            <button type="button" class="dbx-btn dbx-btn-sm -my-0.5" @click="load()"><BaseIcon name="refresh" />Retry</button>
         </div>
         <DataGrid
             :columns="page?.columns ?? []"
@@ -203,6 +206,7 @@ watch(
             :filters="filters"
             :selectable="canWrite"
             :selected="selectedIndex"
+            empty-text="This table has no rows"
             sortable
             filterable
             @sort="onSort"
@@ -210,39 +214,52 @@ watch(
             @row-click="(index: number) => (selectedIndex = selectedIndex === index ? -1 : index)"
         >
             <template #toolbar>
-                <div class="flex items-center gap-1" role="group" aria-label="Pages">
-                    <button type="button" class="dbx-btn" :disabled="loading || stack.length <= 1" @click="previous">← Previous</button>
-                    <span class="px-2 text-zinc-600 tabular-nums dark:text-zinc-300" aria-live="polite">
-                        Page {{ stack.length }}<template v-if="page && page.rows.length">
-                            · rows {{ formatNumber(rowOffset + 1) }}–{{ formatNumber(rowOffset + page.rows.length) }}</template>
+                <template v-if="canWrite">
+                    <span class="flex items-center gap-1.5" role="group" aria-label="Row actions">
+                        <button type="button" class="dbx-btn" @click="selectedIndex = -1; editor = { mode: 'insert' }"><BaseIcon name="plus" />Insert row</button>
+                        <button type="button" class="dbx-btn" :disabled="!selectedRow" :title="selectedRow ? '' : 'Select a row first'" @click="editor = { mode: 'update' }"><BaseIcon name="pencil" />Edit row</button>
+                        <button type="button" class="dbx-btn dbx-btn-danger-ghost" :disabled="!selectedRow" :title="selectedRow ? '' : 'Select a row first'" @click="editor = { mode: 'delete' }"><BaseIcon name="trash" />Delete row</button>
                     </span>
-                    <button type="button" class="dbx-btn" :disabled="loading || !page?.truncated" @click="next">Next →</button>
+                    <span class="text-xs text-fg-subtle">{{ selectedRow ? 'Row selected' : 'Click a row to select it' }}</span>
+                </template>
+                <span v-else-if="key !== null && key.length === 0" class="inline-flex items-center gap-1.5 text-xs text-fg-muted" title="Inline editing needs a primary key">
+                    <BaseIcon name="lock" :size="12" />Read-only: no primary key
+                </span>
+                <span v-else-if="key !== null && (findConnection(label)?.role ?? 'viewer') === 'viewer'" class="inline-flex items-center gap-1.5 text-xs text-fg-muted">
+                    <BaseIcon name="eye" :size="12" />Read-only: viewer role
+                </span>
+            </template>
+
+            <template #footer>
+                <div class="dbx-statusbar">
+                    <div class="flex items-center gap-1" role="group" aria-label="Pages">
+                        <button type="button" class="dbx-btn dbx-btn-ghost dbx-btn-icon dbx-btn-sm" :disabled="loading || stack.length <= 1" aria-label="Previous page" title="Previous page" @click="previous"><BaseIcon name="chevron-left" /></button>
+                        <span class="min-w-28 text-center text-fg" aria-live="polite">
+                            <template v-if="page && page.rows.length">Rows {{ formatNumber(rowOffset + 1) }}–{{ formatNumber(rowOffset + page.rows.length) }}</template>
+                            <template v-else>Page {{ stack.length }}</template>
+                        </span>
+                        <button type="button" class="dbx-btn dbx-btn-ghost dbx-btn-icon dbx-btn-sm" :disabled="loading || !page?.truncated" aria-label="Next page" title="Next page" @click="next"><BaseIcon name="chevron-right" /></button>
+                    </div>
+                    <span class="dbx-separator" aria-hidden="true" />
+                    <span class="flex items-center gap-1.5">
+                        <template v-if="count.value === null">Row count unknown</template>
+                        <template v-else-if="count.exact">{{ formatNumber(count.value) }} {{ count.value === 1 ? 'row' : 'rows' }}<template v-if="filters.length"> match</template></template>
+                        <template v-else>≈ {{ formatNumber(count.value) }} rows <span class="text-fg-subtle">{{ filters.length ? '(table estimate)' : '(estimate)' }}</span></template>
+                        <button v-if="!count.exact" type="button" class="dbx-link font-medium" :disabled="loading" @click="load(true)">
+                            <span v-if="counting" class="inline-flex items-center gap-1"><span class="dbx-spinner size-3" aria-hidden="true" />Counting…</span>
+                            <template v-else>Count exactly</template>
+                        </button>
+                    </span>
+                    <span class="ml-auto flex items-center gap-3">
+                        <label class="flex items-center gap-1.5">
+                            Rows per page
+                            <select v-model.number="limit" class="dbx-select h-6 text-xs" @change="restart(true)">
+                                <option v-for="size in PAGE_SIZES" :key="size" :value="size">{{ size }}</option>
+                            </select>
+                        </label>
+                        <span v-if="page" class="dbx-badge" :title="page.pagination === 'keyset' ? 'Paged by key: fast at any depth' : 'Paged by offset: no usable key, deep pages get slower'">{{ page.pagination }}</span>
+                    </span>
                 </div>
-                <label class="ml-2 flex items-center gap-1 text-zinc-500 dark:text-zinc-400">
-                    Page size
-                    <select v-model.number="limit" class="dbx-input" @change="restart(true)">
-                        <option v-for="size in PAGE_SIZES" :key="size" :value="size">{{ size }}</option>
-                    </select>
-                </label>
-                <span class="ml-2 text-zinc-500 tabular-nums dark:text-zinc-400">
-                    <template v-if="count.value === null">Row count unknown</template>
-                    <template v-else-if="count.exact">{{ formatNumber(count.value) }} rows</template>
-                    <template v-else>≈ {{ formatNumber(count.value) }} rows {{ filters.length ? 'in the table' : '' }} (estimate)</template>
-                </span>
-                <button v-if="!count.exact" type="button" class="dbx-btn" :disabled="loading" @click="load(true)">
-                    {{ counting ? 'Counting…' : 'Exact count' }}
-                </button>
-                <span v-if="page" class="text-xs text-zinc-400" :title="page.pagination === 'keyset' ? 'Paged by key: fast at any depth' : 'Paged by offset: no usable key'">
-                    {{ page.pagination }}
-                </span>
-                <span v-if="canWrite" class="ml-auto flex items-center gap-1" role="group" aria-label="Row actions">
-                    <button type="button" class="dbx-btn dbx-btn-primary" @click="selectedIndex = -1; editor = { mode: 'insert' }">Insert row</button>
-                    <button type="button" class="dbx-btn" :disabled="!selectedRow" @click="editor = { mode: 'update' }">Edit row</button>
-                    <button type="button" class="dbx-btn dbx-btn-danger" :disabled="!selectedRow" @click="editor = { mode: 'delete' }">Delete row</button>
-                </span>
-                <span v-else-if="key !== null && key.length === 0" class="ml-auto text-xs text-zinc-400" title="Inline editing needs a primary key">
-                    read-only (no primary key)
-                </span>
             </template>
         </DataGrid>
 

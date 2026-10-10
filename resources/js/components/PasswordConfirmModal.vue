@@ -2,6 +2,7 @@
 import { nextTick, onBeforeUnmount, ref } from 'vue';
 import type { PasswordConfirmEvent } from '../api';
 import { api, ApiError, apiEvents, describeError } from '../api';
+import BaseIcon from './BaseIcon.vue';
 import ModalDialog from './ModalDialog.vue';
 
 /**
@@ -63,12 +64,13 @@ onBeforeUnmount(() => apiEvents.removeEventListener('password-confirm-required',
 
 <template>
     <ModalDialog :open="open" title="Confirm your password" @close="finish(false)">
-        <form class="mt-3 space-y-3" @submit.prevent="submit">
-            <p class="text-sm text-zinc-600 dark:text-zinc-300">
-                This action needs your password again. Once confirmed, it runs automatically.
-            </p>
+        <form class="space-y-4" @submit.prevent="submit">
+            <div class="dbx-callout dbx-callout-warning">
+                <BaseIcon name="lock" />
+                <span>Destructive actions need your password again. Once confirmed, this one runs straight away.</span>
+            </div>
             <div>
-                <label for="dbx-confirm-password" class="block text-sm font-medium">Password</label>
+                <label for="dbx-confirm-password" class="dbx-label">Password</label>
                 <input
                     id="dbx-confirm-password"
                     ref="input"
@@ -76,15 +78,17 @@ onBeforeUnmount(() => apiEvents.removeEventListener('password-confirm-required',
                     type="password"
                     autocomplete="current-password"
                     required
-                    class="dbx-input mt-1 w-full"
+                    class="dbx-input w-full"
                     :aria-invalid="error !== null"
                     aria-describedby="dbx-confirm-error"
                 >
-                <p id="dbx-confirm-error" role="alert" class="mt-1 min-h-5 text-sm text-red-700 dark:text-red-300">{{ error ?? '' }}</p>
+                <p id="dbx-confirm-error" role="alert" class="mt-1.5 min-h-5 text-sm text-danger-fg">{{ error ?? '' }}</p>
             </div>
-            <div class="flex justify-end gap-2">
-                <button type="button" class="dbx-btn" @click="finish(false)">Cancel</button>
-                <button type="submit" class="dbx-btn dbx-btn-primary" :disabled="busy || password === ''">{{ busy ? 'Checking…' : 'Confirm' }}</button>
+            <div class="flex justify-end gap-2 border-t border-line pt-4">
+                <button type="button" class="dbx-btn dbx-btn-ghost mr-auto" @click="finish(false)">Cancel</button>
+                <button type="submit" class="dbx-btn dbx-btn-primary" :disabled="busy || password === ''">
+                    <span v-if="busy" class="dbx-spinner border-current/30 border-t-current" aria-hidden="true" />{{ busy ? 'Checking…' : 'Confirm' }}
+                </button>
             </div>
         </form>
     </ModalDialog>
