@@ -80,3 +80,13 @@ The tokens and component classes live in `resources/js/app.css`, with documentat
 | `control` border on `panel` (non-text, ≥ 3) | 3.2 | 3.3 |
 
 Every text pair passes AA (4.5:1), and the focus ring and control borders pass the 3:1 non-text minimum. The script that computed these is `/tmp/dbx-ui-tools/contrast.mjs`, a sRGB relative-luminance formula.
+
+## 4. Verification
+
+- `npm run lint`, `npm run typecheck` and `composer test` pass, and two `npm run build` runs produce byte-identical `dist/`.
+- The headless and in-browser runs against the Postgres workbench showed no console errors and no CSP violations.
+- Bundle size (gzip -9), before → after:
+  - CSS: 7.9 → 9.1 KB.
+  - Entry JS: 59.7 → 67.5 KB.
+  - SQL editor chunk: 147.3 → 149.0 KB.
+  - The increase is the icon set, the new components and the token fallbacks. No fonts or dependencies were added.
