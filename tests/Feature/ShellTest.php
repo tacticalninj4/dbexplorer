@@ -152,3 +152,22 @@ it('fails with a clear message when the compiled assets are missing', function (
 
     $this->withoutExceptionHandling()->actingAs(makeUser())->get('/dbexplorer');
 })->throws(RuntimeException::class, "DbExplorer's compiled assets are missing");
+
+it('S15 bans v-html in the SPA source through ESLint, and the source has none', function () {
+    $root = dirname(__DIR__, 2);
+
+    // `npm run lint` (the assets CI job) fails on any v-html.
+    expect((string) file_get_contents($root.'/eslint.config.js'))->toMatch("/'vue\\/no-v-html':\\s*'error'/");
+
+    // The same promise without Node: no v-html attribute or HTML sink in resources/js.
+    $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root.'/resources/js', FilesystemIterator::SKIP_DOTS));
+    $offenders = [];
+
+    foreach ($files as $file) {
+        if (preg_match('/\.(vue|ts)$/', $file->getFilename()) === 1 && preg_match('/\sv-html\s*=|\.(?:inner|outer)HTML\s*=|insertAdjacentHTML\s*\(/', (string) file_get_contents($file->getPathname())) === 1) {
+            $offenders[] = $file->getPathname();
+        }
+    }
+
+    expect($offenders)->toBe([]);
+});
