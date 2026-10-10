@@ -18,7 +18,11 @@ beforeEach(function () {
         'main' => ['viewer' => 'pgsql_readonly'],
     ]]);
 
-    $this->artisan('migrate');
+    // Artisan::call, as in AuditChainTest: on Laravel 9-11 a finished
+    // $this->artisan() leaves its mocked OutputStyle bound in the container,
+    // so the tests' Artisan::call() would write there and Artisan::output()
+    // would come back empty.
+    Artisan::call('migrate');
 
     Storage::fake('local');
     config(['dbexplorer.storage.disk' => 'local', 'dbexplorer.storage.file_ttl_hours' => 24]);
