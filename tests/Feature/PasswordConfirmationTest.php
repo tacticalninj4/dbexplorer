@@ -84,6 +84,9 @@ it('S5 accepts the right password with 204, audits it, and lets the destructive 
 });
 
 it('S5 requires confirmation again once auth.password_timeout has passed', function () {
+    // Frozen, so a second ticking over between the confirmation and travel()
+    // can't add to the elapsed time.
+    $this->freezeTime();
     config(['auth.password_timeout' => 60]);
 
     $this->actingAs(userWithPassword())->postJson('/dbexplorer/api/confirm-password', ['password' => 'correct-horse-battery-staple'])->assertNoContent();
@@ -96,6 +99,9 @@ it('S5 requires confirmation again once auth.password_timeout has passed', funct
 });
 
 it('S5 falls back to Laravel\'s 3-hour default timeout', function () {
+    // Frozen, so a second ticking over between the confirmation and travel()
+    // can't add to the elapsed time.
+    $this->freezeTime();
     config(['auth.password_timeout' => null]);
 
     $this->actingAs(userWithPassword())->postJson('/dbexplorer/api/confirm-password', ['password' => 'correct-horse-battery-staple'])->assertNoContent();
