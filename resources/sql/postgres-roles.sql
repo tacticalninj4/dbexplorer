@@ -36,8 +36,9 @@ ALTER DEFAULT PRIVILEGES FOR ROLE app_owner IN SCHEMA public GRANT USAGE, SELECT
 
 -- 6. Admin: DDL on the app's objects through membership of the owner role.
 GRANT app_owner TO dbx_admin;
--- Optional, for the planned active-sessions screen: see and cancel other sessions.
--- GRANT pg_read_all_stats, pg_signal_backend TO dbx_admin;
+-- Optional, for the active-sessions API: also show other logins' queries.
+-- DbExplorer only ever cancels or terminates dbx_admin's own sessions.
+-- GRANT pg_read_all_stats TO dbx_admin;
 
 -- 7. A schema for DbExplorer's own tables (audit log, runs, ...) that the viewer
 --    and editor can't use. Point dbexplorer.storage.connection at it.

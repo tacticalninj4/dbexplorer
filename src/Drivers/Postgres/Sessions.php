@@ -7,11 +7,11 @@ namespace TacticalNinj4\DbExplorer\Drivers\Postgres;
 use Illuminate\Database\ConnectionInterface;
 
 /**
- * Active sessions (PRD §7.10, M4.4): what `pg_stat_activity` shows for this
+ * Active sessions (PRD §7.11, M4.4): what `pg_stat_activity` shows for this
  * database, plus cancel and terminate. Only backends of the same database
  * login are ever signalled (`usename = current_user`), so a pid reused by
- * someone else's session can't be killed; other roles' backends need the
- * `pg_signal_backend` grant, which docs/security.md covers.
+ * someone else's session can't be killed, and no grant beyond the login's
+ * own is needed (docs/security.md §3).
  */
 final class Sessions
 {

@@ -16,8 +16,8 @@ use TacticalNinj4\DbExplorer\Jobs\Concerns\TracksRun;
 use TacticalNinj4\DbExplorer\Models\Run;
 
 /**
- * A database backup (PRD §7.12): pg_dump in custom format into a temp file,
- * streamed onto the private backup disk as `backups/{label}/run-{id}.dump`,
+ * A database backup (PRD §7.10): pg_dump in custom format, writing straight
+ * onto the private backup disk as `backups/{label}/run-{id}.dump`,
  * with retention keeping the newest `backup.keep` per label. Restores are a
  * CLI matter — pg_restore against a target the operator chooses — and the
  * docs say so; the API never restores.

@@ -13,7 +13,7 @@
 DbExplorer mounts a secure, browser-based PostgreSQL explorer inside your Laravel app. It reuses your app's auth, database connections, queue and scheduler, so there's no separate pgAdmin or phpMyAdmin to deploy, patch and expose.
 
 > [!IMPORTANT]
-> **Pre-release.** The foundation is built: the enable switch, routing, gate, IP allowlist, roles, the role → connection mapping, the hash-chained audit log and the app shell. The explorer itself (object browser, data grid, SQL editor) and everything after it are **planned**, see [Roadmap](#roadmap). Don't expect to browse data yet.
+> **Not yet released.** Every feature on the [Roadmap](#roadmap) is built and tested through the JSON API. The browser UI covers browsing, the data grid with inline editing, the SQL editor, history, schema forms and the Runs page; screens for exports, background queries, CSV import, scripts, saved queries, schedules, backups, active sessions and the audit log are coming. Until then those work through the API only.
 
 ## Security model
 
@@ -32,8 +32,8 @@ Read [docs/security.md](docs/security.md) for the threat model, the PostgreSQL r
 | PHP | 8.0+ |
 | Laravel | 9, 10, 11, 12, 13 |
 | PostgreSQL | 12+, with the `pdo_pgsql` extension |
-| Scheduler | for `dbx:prune` and `dbx:audit:verify` |
-| Queue worker | for background queries, exports, imports and scripts *(planned)* |
+| Scheduler | Laravel's `schedule:run` cron, for the package's own `dbx:prune` and `dbx:schedule:tick`, and your `dbx:audit:verify` |
+| Queue worker | for background queries, exports, imports, scripts, backups and scheduled queries |
 | `pg_dump` | for backups, matching your server's major version |
 
 Several of these Laravel and PHP versions no longer get upstream security fixes; support for those is best-effort. MySQL support is planned for v2.
@@ -160,21 +160,23 @@ All keys live in `config/dbexplorer.php`.
 | `connections` | `main` → `pgsql_readonly` / `pgsql_editor` / `pgsql` | Label → role → Laravel connection. The only databases DbExplorer can reach. |
 | `limits.{viewer,editor,admin}.timeout` | `30` / `60` / `120` | Statement timeout in seconds per role. |
 | `limits.{viewer,editor,admin}.rows` | `1000` / `5000` / `10000` | Maximum rows returned per role, and the largest grid page. |
-| `limits.background.timeout` | `3600` | Statement timeout in seconds for queued jobs *(planned, M3)*. |
-| `confirm_password` | `true` | Destructive actions need the password re-confirmed within Laravel's `auth.password_timeout` (shared with the host app's `password.confirm`). Users without a password (SSO-only) can't confirm, so can't run them. `false` skips confirmation entirely; see [docs/security.md](docs/security.md). |
-| `limits.queries_per_minute` | `60` | The `dbexplorer` rate limiter, per user or per IP, for every per-connection API call (browsing, rows, queries, history). |
+| `limits.background.timeout` | `3600` | Seconds a queued run may take (the job timeout), and the statement timeout of background queries and exports. |
+| `limits.queries_per_minute` | `60` | The `dbexplorer` rate limiter, per user or per IP, for every per-connection API call. |
 | `limits.sql_length` | `100000` | Maximum characters of SQL the editor may submit. |
-| `hidden` | `pg_toast*`, `*.password_reset*`, `*.personal_access_tokens`, `*.dbx_*`, `dbexplorer.*` | Globs for schemas and tables hidden from browsing, including DbExplorer's own tables *(planned, M1)*. |
-| `masking` | `*.password`, `*.*token*`, `*.*secret*` | Globs for `table.column` values masked in grids and exports *(planned, M1)*. |
-| `queue.connection` | `null` | Queue connection for background work; null uses the app default *(planned, M3)*. |
-| `queue.queue` | `'default'` | Queue name for background work *(planned, M3)*. |
-| `backup.pg_dump_path` | `'pg_dump'` | The `pg_dump` binary |
-| `backup.disk` | `'local'` | Private disk for backups |
-| `backup.keep` | `7` | Backups kept per connection label |
+| `limits.import.max_upload_kb` | `51200` | Largest CSV upload, in kilobytes. |
+| `limits.import.batch` | `5000` | Rows per `COPY` batch in a CSV import; cancel is checked between batches, and skip-bad-rows mode retries a failed batch row by row. |
+| `confirm_password` | `true` | Destructive actions need the password re-confirmed within Laravel's `auth.password_timeout` (shared with the host app's `password.confirm`). Users without a stored password (such as SSO-only accounts) can't confirm, so can't run them. `false` skips confirmation entirely; see [docs/security.md](docs/security.md). |
+| `hidden` | `pg_toast*`, `*.password_reset*`, `*.personal_access_tokens`, `*.dbx_*`, `dbexplorer.*` | Globs for schemas and `schema.table` names hidden from browsing (404) and, best effort, from queries. The defaults include DbExplorer's own tables. |
+| `masking` | `*.password`, `*.*token*`, `*.*secret*` | Globs (or callables) on `schema.table.column` whose values are masked in grids, edit views and exports. Aliased columns aren't masked; see [docs/security.md](docs/security.md). |
+| `queue.connection` | `null` | Queue connection for runs; null uses the app default. A `sync` connection shows a warning. |
+| `queue.queue` | `'default'` | Queue name for runs. |
+| `backup.pg_dump_path` | `'pg_dump'` | The `pg_dump` binary. Its major version must be at least the server's. |
+| `backup.disk` | `'local'` | Private filesystem disk backups are written to. |
+| `backup.keep` | `7` | Backups kept per connection label. |
 | `storage.connection` | `env('DBEXPLORER_STORAGE_CONNECTION')` | Connection for the `dbx_*` tables; null uses the app default. Recommended: a connection on the `dbexplorer` schema. |
-| `storage.disk` | `'local'` | Private disk for exports and other generated files *(planned, M3)*. |
-| `storage.file_ttl_hours` | `24` | Generated files are pruned after this many hours *(planned, M3)*. |
-| `audit.retention_days` | `90` | `dbx:prune` deletes older audit rows. Null keeps them forever. |
+| `storage.disk` | `'local'` | Private disk for exports and CSV uploads. A public disk logs a warning. |
+| `storage.file_ttl_hours` | `24` | `dbx:prune` deletes exports and uploads older than this. |
+| `audit.retention_days` | `90` | `dbx:prune` deletes audit rows, finished runs and query history older than this. Null keeps them forever. |
 | `audit.log_channel` | `null` | Log channel that also receives every audit entry and its hash. |
 | `audit.key` | `env('DBEXPLORER_AUDIT_KEY')` | HMAC key for the audit chain; falls back to `APP_KEY`. |
 
@@ -185,18 +187,19 @@ Other publishable resources: `--tag=dbexplorer-migrations`, `dbexplorer-views` a
 | Command | What it does |
 |---|---|
 | `dbx:install [--force]` | Publishes the config and prints the remaining setup steps. |
-| `dbx:audit:verify` | Recomputes the audit hash chain; exits non-zero at the first edited, deleted or reordered row. |
-| `dbx:prune` | Deletes audit rows older than `audit.retention_days`, after writing a checkpoint so the chain still verifies. |
+| `dbx:audit:verify` | Recomputes the audit hash chain; exits non-zero at the first edited, deleted or reordered row. Schedule it yourself. |
+| `dbx:prune` | Deletes expired exports and uploads (`storage.file_ttl_hours`), then finished runs, query history and audit rows older than `audit.retention_days`, writing an audit checkpoint so the chain still verifies. Scheduled daily by the package. |
+| `dbx:schedule:tick` | Queues the scheduled queries that are due, one at a time per schedule. Scheduled every minute by the package. |
 
 ## Roadmap
 
-| Milestone | Scope | Status |
-|---|---|---|
-| M0 | Config, routing, gate, IP allowlist, roles, audit log, app shell, `dbx:install` | Built |
-| M1 | Object browser, read-only data grid and SQL editor, EXPLAIN, hidden objects, masking, timeouts and row caps | Built |
-| M2 | Inline row editing, DML and DDL, password re-confirmation for destructive actions | Built |
-| M3 | Background queries, exports, CSV import, script runner, signed downloads | Built |
-| M4 | Saved and scheduled queries, backups, active sessions, audit log viewer | Built |
+| Milestone | Scope | API | UI |
+|---|---|---|---|
+| M0 | Config, routing, gate, IP allowlist, roles, audit log, app shell, `dbx:install` | Built | Built |
+| M1 | Object browser, read-only data grid and SQL editor, EXPLAIN, history, hidden objects, masking, timeouts and row caps | Built | Built |
+| M2 | Inline row editing, DML and DDL, password re-confirmation for destructive actions | Built | Built, except forms for create table, create view, column type/default/nullability and constraints (API only; DDL also runs from the SQL editor) |
+| M3 | Background queries, exports, CSV import, script runner, signed downloads | Built | Runs page (progress, cancel, download); the rest coming |
+| M4 | Saved and scheduled queries, backups, active sessions, audit log viewer | Built | Coming |
 
 The full plan is in [docs/PRD.md](docs/PRD.md).
 

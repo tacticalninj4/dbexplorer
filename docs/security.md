@@ -4,8 +4,6 @@ DbExplorer puts a database client inside your Laravel app. This page covers what
 
 The short version: **the database grants are the security boundary.** Everything DbExplorer checks in PHP is a second line of defense. Give each role its own PostgreSQL login with only the privileges that role needs, using the recipe below.
 
-Items marked *(planned)* are designed and specified in [PRD.md](PRD.md) but not built yet.
-
 ## 1. Threat model
 
 **In scope:**
@@ -89,8 +87,9 @@ ALTER DEFAULT PRIVILEGES FOR ROLE app_owner IN SCHEMA public GRANT USAGE, SELECT
 
 -- 6. Admin: DDL on the app's objects through membership of the owner role.
 GRANT app_owner TO dbx_admin;
--- Optional, for the planned active-sessions screen: see and cancel other sessions.
--- GRANT pg_read_all_stats, pg_signal_backend TO dbx_admin;
+-- Optional, for the active-sessions API: also show other logins' queries.
+-- DbExplorer only ever cancels or terminates dbx_admin's own sessions.
+-- GRANT pg_read_all_stats TO dbx_admin;
 
 -- 7. A schema for DbExplorer's own tables (audit log, runs, ...) that the viewer
 --    and editor can't use. Point dbexplorer.storage.connection at it.
@@ -118,7 +117,7 @@ END $$;
 Notes:
 
 - **Timeouts** set with `ALTER ROLE` are session defaults, not caps: any session can `SET statement_timeout`. They catch connections that forget to set one.
-- **`pg_signal_backend`** lets `dbx_admin` cancel or terminate *any* non-superuser session, your app's included. Grant it only if you want that from the browser.
+- **Active sessions** (`GET api/{label}/sessions`, admins only) list the label database's sessions. Cancel and terminate only ever signal sessions of the same login (`usename = current_user`), so a reused pid can't hit someone else's backend; terminate needs a password confirmation, and both are audited. `pg_read_all_stats` lets `dbx_admin` see other logins' query text, your app's included. Don't grant `pg_signal_backend`: DbExplorer doesn't need it, and through the SQL editor it would let an admin cancel or terminate any non-superuser session.
 - **DbExplorer's own tables** (`dbx_audit_log`, `dbx_runs`, ...) must not be writable by the explorer logins, or an editor could rewrite the audit log from the SQL editor. Two layouts:
   - *Recommended:* keep them in the `dbexplorer` schema (step 7), which the viewer and editor have no `USAGE` on, through a dedicated connection (below). Already migrated into `public`? Move them with `ALTER TABLE ... SET SCHEMA dbexplorer`.
   - *Default* (`storage.connection` null): they land in `public`, and steps 4 and 5 grant them to the viewer and editor. The `DO` block after step 7 revokes that, but step 5's default privileges grant each new `dbx_` table again, so rerun the block after every `php artisan migrate`. Alternatively, replace steps 4 and 5 with grants on an explicit table list, or keep the app's tables in their own schema.
@@ -178,7 +177,7 @@ Set `DBEXPLORER_STORAGE_CONNECTION=dbexplorer_meta` in `.env` before running `ph
 These are known limits. Where a test exists, it is named `GAP: ...` so the behavior can't change silently.
 
 - **The SQL classifier is UX only.** It labels statements as read, DML, DDL, destructive or unknown to drive confirmations: the query API asks the client to confirm anything that isn't a read (409), asks for the password for destructive SQL (423), and refuses DDL, including DROP, TRUNCATE and ALTER … DROP, from viewers and editors (403). None of that is a security check; the database login is. A function or procedure that runs DDL, `query_to_xml()`, `lo_import()` or `LOAD` reads as harmless to the classifier, and `Pgsql/ClassifierEvasionTest` proves the recipe's logins refuse each of them where the role's grants forbid it. Where the grants allow it, nothing refuses: an editor's `SELECT f()`, where `f()` updates rows, reads as harmless and writes without any confirmation prompt. Every login can still create temporary tables, because PostgreSQL grants `TEMPORARY` on the database to `PUBLIC`. They live only in that session, and DbExplorer's `DISCARD ALL` after every query drops them. Revoking `TEMPORARY` from `PUBLIC` would also take it from your app's own roles, so the recipe leaves it alone.
-- **Masking misses aliases** *(planned, M1)*. Masking matches `schema.table.column` through the source table PostgreSQL reports for each result column. `SELECT password AS x FROM users` returns the value unmasked, because PostgreSQL doesn't report the source column of an aliased expression. To really keep a column from someone, use a column grant (recipe step 8).
+- **Masking misses aliases.** Masking matches `schema.table.column` through the source table PostgreSQL reports for each result column. `SELECT password AS x FROM users` returns the value unmasked, because PostgreSQL doesn't report the source column of an aliased expression. To really keep a column from someone, use a column grant (recipe step 8).
 - **NOTICE messages are not masked.** A function or `DO` block can `RAISE NOTICE` any value it can read, and the SQL editor shows notices as they are (PHP 8.4+ only). Like aliasing, this is why a column grant, not masking, is the way to keep a value from a role.
 - **Hidden objects leak through functions.** Before a query runs, DbExplorer plans it with `EXPLAIN` and rejects it, with the same error a missing table gives, when the plan touches a hidden table directly, through a view, a CTE or a subquery. A function that reads the table is not caught, and statements `EXPLAIN` can't plan (`COPY`, `CREATE VIEW`, `DO`, ...) aren't checked. Existence isn't secret either: the catalogs (`pg_class`, `to_regclass()`) show every table name. Revoke access in the database for real enforcement.
 - **Hidden objects can show up in definitions.** The object browser leaves hidden objects out of listings and answers 404 for them, and a foreign key to a hidden table is shown as `REFERENCES <hidden>`. View, materialized view and function definitions are shown as PostgreSQL returns them, so a view over a hidden table still names it. Rewriting SQL bodies reliably isn't possible; revoke access in the database if the names themselves are sensitive.
@@ -213,12 +212,12 @@ A schedule runs unattended as an admin, so it never runs SQL an admin didn't app
 - **Re-sync is a fresh approval.** `POST api/{label}/schedules/{id}/resync` (admins only) copies the saved query's current SQL again — only if the admin can still see it, own or shared, else 404 — and records them as the approver. Both creating and re-syncing are audited (`schedule.created`, `schedule.resynced`) with the approved SQL, its hash and the permissions granted.
 - **Runs as the approver.** Each tick and each job re-resolves the approver's role on the label. If it isn't `admin` any more, the run fails, the schedule is disabled (audited as `schedule.disabled`) and `ScheduleFailed` fires. A snapshot that is missing, unapproved or doesn't match its hash is disabled the same way and never runs.
 - **Read-only unless approved for writes.** A schedule's statement runs in `BEGIN READ ONLY`, so even a write the classifier misses (a volatile function, `nextval()`) fails at the database. `allow_writes` lets it run in a read-write transaction; DDL also needs `allow_ddl` (which implies `allow_writes`). Both are set only when approving: SQL the classifier calls DML or destructive is refused without `allow_writes` (422), DDL without `allow_ddl` (422), and granting either needs a recent password confirmation (423, S5). Nobody confirms at run time — there is no one there.
-- **Upgrading from 1.0.0.** The migration copies each existing schedule's current saved-query SQL into it but leaves it **unapproved and disabled**: the SQL may have been edited by someone else since it was scheduled. Review each one, re-sync it, then enable it (`PATCH … {"enabled": true}` is refused until it is approved).
+- **Upgrading an install from before snapshots.** The migration copies each existing schedule's current saved-query SQL into it but leaves it **unapproved and disabled**: the SQL may have been edited by someone else since it was scheduled. Review each one, re-sync it, then enable it (`PATCH … {"enabled": true}` is refused until it is approved).
 - **ScheduleFailed** carries the schedule id, run id and the audit-style error (SQLSTATE and primary message), never SQL, bound values or connection config, and fires after the run's audit row. A failed run doesn't disable the schedule: the job releases the schedule's lock when it ends, so the next due tick runs it again.
 
 ## 7. Backups
 
-Backups run `pg_dump` through Symfony Process as an **argument array** — never a shell string — and the password reaches it only through the `PGPASSWORD` environment variable, never on the command line where `ps` or an error log would show it. A dump is stored on the private disk configured at `backup.disk`, downloadable by its run's owner through the same short-lived signed URL as any run result.
+Backups run `pg_dump` through Symfony Process as an **argument array** — never a shell string — and the password reaches it only through the `PGPASSWORD` environment variable, never on the command line where `ps` or an error log would show it. The connection's `sslmode`, `sslrootcert`, `sslcert` and `sslkey` reach it the same way (`PGSSLMODE`, `PGSSLROOTCERT`, `PGSSLCERT`, `PGSSLKEY`), so it connects as securely as the app does. Before queueing, `POST api/{label}/backups` runs a preflight (pg_dump present and at least the server's major version) and answers 422 with the problem instead of queueing a dump that would fail. A failed dump's error has the host, port, login, database and password redacted. A dump is stored on the private disk configured at `backup.disk`, in custom format, and downloads through the same short-lived signed URL as any run result, for its owner or an admin of the label.
 
 **Restoring is a CLI job, deliberately not an API.** An authenticated admin being able to trigger a restore of the database they browse would make every other control in this document decorative. To restore:
 

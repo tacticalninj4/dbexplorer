@@ -4,7 +4,7 @@
 |---|---|
 | Applies to | [PRD.md](PRD.md), [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) |
 | Status | Draft v0.1 |
-| Last updated | 2026-10-09 |
+| Last updated | 2026-10-11 |
 
 ## 1. Principles
 
@@ -48,7 +48,7 @@ These use Testbench with `actingAs()` on the workbench `User` and need no Postgr
 - **Audit (S17–S19):** rows are written, `update()` and `delete()` on the model throw, the configured log channel receives entries, and the separate `storage.connection` is honoured.
 - **Package surface:** config merge and override, every publish tag, `dbx:install`, `dbx:prune`, scheduler registration of `dbx:schedule:tick` and `dbx:prune`.
 - **Password confirmation (S5):** 423 when stale → confirm → retry succeeds; wrong password; throttling; timeout expiry.
-- **Downloads (S16):** expired signature, another user → 403, an admin can download.
+- **Downloads (S16):** expired signature, tampered signature, another user → 404, an admin of the label can download.
 
 ### 2.3 Postgres integration: the core
 The full setup is in §3. What this layer proves:
@@ -63,7 +63,7 @@ The full setup is in §3. What this layer proves:
 - **Rows API (S12):** keyset pagination is correct across page boundaries. Sort and filter injection attempts (`id; drop`, `id desc, (select …)`, unknown operators) get 422.
 - **Writes:** an optimistic-lock conflict returns 409, a table with no PK returns 422, and `to_regtype` rejects `int; DROP TABLE x`.
 - **Jobs:** see §4.
-- **Backups (S20):** real `pg_dump` → `pg_restore` into a scratch database, then row counts are compared.
+- **Backups (S20):** real `pg_dump` through the backup job → `pg_restore` into a fresh database, then row counts and contents are compared. It skips, with the preflight's reason, when no `pg_dump` is at least the server's major version.
 - **Sessions:** list, cancel a sleeping backend, non-admin → 403.
 
 ### 2.4 Frontend
@@ -99,6 +99,8 @@ DB_PGSQL_PORT=54320
 DB_PGSQL_USERNAME=postgres
 DB_PGSQL_PASSWORD=secret
 ```
+
+The backup tests need a `pg_dump` and `pg_restore` at least as new as the server. When the ones on `PATH` are older (Postgres.app 17 against a PostgreSQL 18 container), `tests/Pest.php` falls back to the `dbx-pg` container's own tools through `tests/Pgsql/scripts/docker-pgdump.sh` and `docker-pgrestore.sh`; with neither, the dump and restore tests skip with the reason.
 
 Without `DB_PGSQL_HOST`, the `pgsql` group is **skipped, not failed**, so contributors without Docker can still run everything else. CI always sets it, so skips can't hide failures there.
 
@@ -158,7 +160,7 @@ The metadata store (`dbx_*` tables) for pgsql tests lives in the worker database
 | Dispatch: the right job, only the run ID in the payload (S21), the right queue | `Queue::fake()` + `Queue::assertPushed()` with a payload assertion |
 | Job behavior: status transitions, progress, result file, `tries = 1` | Call `handle()` directly against pgsql with `Storage::fake()` |
 | User demoted after dispatch → job fails | Change the `roleUsing` callback between dispatch and `handle()` |
-| **Cancel mid-query** | End to end: use the `database` queue driver and start a child process `vendor/bin/testbench queue:work --once` (Symfony `Process`) running a background query with `pg_sleep(30)`. Poll `dbx_runs` until `pid` is set, call `POST /api/runs/{id}/cancel`, wait for the child to exit, then assert run = `cancelled` and the backend is gone from `pg_stat_activity`. Timeout 20s. |
+| **Cancel mid-query** | End to end: use the `database` queue driver and start a child process `vendor/bin/testbench queue:work --once` (Symfony `Process`) running a background query with `pg_sleep(30)`. Poll `dbx_runs` until `pid` is set, call `POST api/{label}/runs/{id}/cancel`, wait for the child to exit, then assert run = `cancelled` and the backend is gone from `pg_stat_activity`. Timeout 20s. |
 | Export memory stays flat | In-process export of `fixture.big`, then assert `memory_get_peak_usage(true)` grows by less than 64 MB |
 | Import modes | All-or-nothing rolls back fully on one bad row. Skip-bad-rows imports the good rows and reports the bad row numbers. |
 | Script runner | Transaction mode rolls back everything, step mode keeps earlier statements, and cancel between statements works |
@@ -180,14 +182,14 @@ Each requirement has a positive test (a legitimate action works) and an adversar
 | S11 | classifier-evasion payloads run as viewer and as editor: DDL inside a function or procedure (called from SELECT, a CTE, VALUES, EXPLAIN ANALYZE or CALL), `query_to_xml()`, a server file read, `DO $$ … $$`, `COPY … TO PROGRAM`. The database rejects whatever the role's grants forbid: any write by the viewer, DDL by the editor. It does **not** reject what the role may do anyway: the classifier only drives confirmation prompts, so an editor calling a function with side effects (`SELECT fixture.sneaky()`, read as `read`) writes without a prompt. See [security.md §4](security.md#4-what-the-app-level-checks-do-not-guarantee). | `Pgsql/ClassifierEvasionTest` |
 | S12 | sort and filter injection, unknown columns, unknown operators | `Pgsql/RowsApiTest` |
 | S13 | a hidden table queried directly, through a view, a CTE or a subquery → rejected. Through a function → **documented gap** (the test asserts current behavior). | `Pgsql/HiddenObjectsTest` |
-| S14 | a masked column in grid, query and export. `SELECT password AS x` → **documented gap** (pdo_pgsql keeps the table name but not the source column, as verified by the spike below). The test asserts current behavior, and the docs point to column-level `REVOKE`. | `Pgsql/MaskingTest` |
-| S15 | a cell value `<img src=x onerror=…>` comes back as a JSON string, CSP header present, `no-v-html` lint | `Feature/ShellTest` + ESLint |
+| S14 | a masked column in grid, query, edit view and export. `SELECT password AS x` → **documented gap** (pdo_pgsql keeps the table name but not the source column, as verified by the spike below). The test asserts current behavior, and the docs point to column-level `REVOKE`. | `Unit/MaskerTest`, `Pgsql/MaskingTest` |
+| S15 | cell values `<img src=x onerror=…>` and `"><script>` in text, jsonb and array columns come back from the rows and query APIs byte for byte as JSON strings; the shell never embeds row data; CSP header present; `vue/no-v-html` is an ESLint error and `resources/js` has no HTML sink | `Pgsql/CellXssTest`, `Feature/ShellTest`, ESLint |
 | S16 | expired URL, another user's URL, tampered signature | `Feature/DownloadTest` |
 | S17–S19 | every write path leaves an audit row; update or delete of an audit row throws | `Feature/AuditTest`, plus an audit assertion in each write test |
 | S22 | audit chain: a tampered field, a deleted middle row, a reordered row and a wrong key are each detected; post-prune verification passes; concurrent inserts on pgsql don't fork the chain; tail truncation → `GAP:` test | `Feature/AuditChainTest`, `Pgsql/AuditChainConcurrencyTest` |
 | Events | each event fires after its audit row is written; its payload has no unmasked values, bindings or connection config | `Event::fake()` assertions in each trigger's test |
 | S20 | the `Process` command line contains no password, and arguments are passed as an array, not a shell string | `Pgsql/BackupTest` |
-| S21 | serialized job payloads contain no credentials | `Feature/RunJobTest` |
+| S21 | serialized job payloads contain no credentials | `Feature/RunsTest` |
 
 **Documented-gap tests** use the prefix `GAP:` in the test name, so they're easy to find and can't change silently.
 

@@ -14,7 +14,7 @@ use TacticalNinj4\DbExplorer\Role;
 use TacticalNinj4\DbExplorer\Security\PasswordConfirmation;
 
 /**
- * The active sessions API (PRD §7.10, M4.4), admins only: list this
+ * The active sessions API (PRD §7.11, M4.4), admins only: list this
  * database's backends, cancel a running statement, or terminate a session
  * outright. Terminate is destructive (S5): a recent password confirmation,
  * else 423. Both signals are audited.

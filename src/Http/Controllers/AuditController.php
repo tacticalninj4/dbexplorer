@@ -13,7 +13,7 @@ use TacticalNinj4\DbExplorer\Models\AuditEntry;
 use TacticalNinj4\DbExplorer\Role;
 
 /**
- * The audit log viewer API (PRD §7.11, M4.5): admins only, read-only and
+ * The audit log viewer API (PRD §7.12, M4.5): admins only, read-only and
  * paginated, filterable by user, label, action, classification and date.
  * The entries are what the append-only log already holds (S17–S19); SQL is
  * masked text, and meta carries counts, never bound values.

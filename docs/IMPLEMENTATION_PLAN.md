@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | Implements | [PRD.md](PRD.md) v0.1 |
-| Status | Draft v0.1 |
-| Last updated | 2026-10-09 |
+| Status | M0–M4 implemented through the API; the M3/M4 screens are still to come (README Roadmap) |
+| Last updated | 2026-10-11 |
 
 Each task below is meant to be **one PR**. Tasks inside a milestone are ordered and usually depend on the ones before them. A milestone is done when its exit criteria pass in CI. Then it gets tagged (`v0.1.0-m1`, …) per the `package-release` skill.
 
@@ -81,7 +81,7 @@ src/
   Events/{QueryExecuted,RowChanged,DdlExecuted,RunFinished,ScheduleFailed}.php
   Jobs/{RunQuery,Export,Import,RunScript,Backup,RunScheduledQuery}.php   (+ Concerns/TracksRun)
   Notifications/ScheduledQueryFinished.php
-  Console/{InstallCommand,PruneCommand,ScheduleTickCommand}.php
+  Console/{InstallCommand,PruneCommand,ScheduleTickCommand,AuditVerifyCommand}.php
 docs/  PRD.md  IMPLEMENTATION_PLAN.md  security.md  (user-facing docs live in README until they outgrow it)
 ```
 
@@ -307,8 +307,8 @@ Plain event classes, constructed with public properties (PHP 8.0-safe, no `reado
 - `Models/Run`: type, status (`RunStatus` constants), `progress` (0–100 or null), `meta` (json), `result_path`, `error`, `pid`, `cancel_requested`, `user_id`, `label`, `role`, timestamps.
 - `Jobs/Concerns/TracksRun` handles mark running, store `pg_backend_pid()`, progress updates, finish or fail, and `failed()` hooks.
 - **All jobs have `$tries = 1`.** Write jobs aren't idempotent and must never retry. `$timeout` comes from `limits.background.timeout`. Jobs carry only the run ID (S21) and re-resolve the role's connection at runtime. If the user's role has been lowered since dispatch, the job fails.
-- `POST /api/runs/{id}/cancel` sets `cancel_requested` and calls `pg_cancel_backend(pid)` on the run's connection. Postgres allows the same DB role to cancel its own backends. Jobs also check the flag between chunks and statements.
-- `GET /api/runs` returns your own runs (admins see all runs) and `GET /api/runs/{id}`. The SPA polls every 2s while any run is active.
+- `POST api/{label}/runs/{id}/cancel` sets `cancel_requested` and calls `pg_cancel_backend(pid)` on the run's connection. Postgres allows the same DB role to cancel its own backends. Jobs also check the flag between chunks and statements.
+- `GET api/{label}/runs` returns your own runs (admins of the label see every run on it) and `GET api/{label}/runs/{id}`. Anyone else's run is a 404. The SPA polls every 2s while any run is active.
 - Queue health: if the queue driver is `sync` → banner. If any run has been `queued` for more than 5 minutes → "no worker seems to be running" banner. No heartbeat infrastructure.
 - Tests: status transitions, cancel mid-`pg_sleep` (pgsql), demoted user fails the job, sync-driver warning.
 
@@ -318,16 +318,16 @@ Plain event classes, constructed with public properties (PHP 8.0-safe, no `reado
 - Tests: a 1M-row export keeps peak memory under 64 MB (`memory_get_peak_usage`), formats round-trip, masked columns stay masked in the file.
 
 ### M3.3 Downloads + pruning (S16)
-- `GET /api/runs/{id}/download` returns `URL::temporarySignedRoute(..., 10 min)`. The signed route also checks `run.user_id === auth()->id()` (or admin). The disk must be private: at boot, `local` without a `url` passes, `public` triggers a warning.
+- `GET api/{label}/runs/{id}/download` returns `URL::temporarySignedRoute(..., 10 min)`. The signed route also checks `run.user_id === auth()->id()` (or an admin of the run's label), and answers 404 otherwise, so run ids can't be probed. The disk must be private: at boot, `local` without a `url` passes, `public` triggers a warning.
 - `dbx:prune` deletes expired files (`storage.file_ttl_hours`), runs, history, and audit rows older than `audit.retention_days`. The provider schedules it daily through `callAfterResolving(Schedule::class, …)`.
-- Tests: expired signature, a different user gets 403, prune removes only expired rows and files.
+- Tests: expired signature, a different user gets 404, prune removes only expired rows and files.
 
 ### M3.4 CSV import
 - Upload → private disk → `POST /imports/preview` returns the first 20 rows plus detected columns → the user maps columns → dispatch `Jobs/Import`.
 - **All-or-nothing:** one transaction and `pgsqlCopyFromArray` in batches of 5000. Any error rolls everything back.
 - **Skip bad rows:** each batch runs under a `SAVEPOINT`. If a batch fails, roll back to the savepoint and insert that batch row by row to find the bad rows, which are recorded in `meta.errors` (capped at 1000).
 - PHP 8.4 deprecates `PDO::pgsqlCopyFromArray` in favour of `Pdo\Pgsql::copyFromArray`. A small version check picks the right one.
-- Editor role or higher. Upload size is capped by config, and only `text/csv` and `text/plain` are accepted.
+- Editor role or higher. Upload size is capped by `limits.import.max_upload_kb`, and only content sniffed as `text/csv`, `text/plain`, `application/csv` or `text/x-csv` is accepted. The run reports `inserted`, `skipped` and `errors` (row number and message, never cell values).
 - Tests: both modes, bad rows reported, viewer gets 403.
 
 ### M3.5 Script runner
@@ -353,25 +353,25 @@ Plain event classes, constructed with public properties (PHP 8.0-safe, no `reado
 - Tests: param binding, `:name` inside a string untouched, role check on shared queries.
 
 ### M4.2 Scheduled queries + notifications
-- `Schedule`: `saved_query_id`, `cron`, `enabled`, `notify` (json: `on` = success|failure|threshold, `threshold_rows`, `mail` recipients), `user_id`, `last_run_at`.
+- `Schedule`: `saved_query_id` (provenance only), a snapshot of the SQL and params with its `sql_hash`, `approved_by`/`approved_at`, `allow_writes`/`allow_ddl`, `cron`, `enabled`, `notify` (json: `on` = success|failure|threshold, `threshold_rows`, `mail` recipients), `user_id`, `last_run_at`. Semantics in PRD §7.9 and docs/security.md §6; `POST api/{label}/schedules/{id}/resync` re-approves the saved query's current SQL.
 - `dbx:schedule:tick` is registered `->everyMinute()` through `callAfterResolving(Schedule::class)`. For each enabled schedule where `CronExpression::isDue()` is true, it takes `Cache::lock("dbx:schedule:{id}", timeout)` → dispatches `RunScheduledQuery`.
-- **Run-as:** the job re-resolves the creator's role. If they're no longer admin, the schedule is disabled and audited.
+- **Run-as:** the job runs the snapshot as the approving admin, in a read-only transaction unless `allow_writes`. It re-resolves the approver's role; if they're no longer admin, or the snapshot doesn't match its hash, the schedule is disabled and audited.
 - `Notifications/ScheduledQueryFinished` goes out by mail through `Notification::route('mail', …)`. For other channels, the host app can bind its own notifiable. No Slack dependency is added.
 - Tests: due vs. not-due, overlap lock, creator demoted → disabled, threshold notification sent or not sent (`Notification::fake()`).
 
 ### M4.3 Backups (S20)
-- `Jobs/Backup` runs `new Process([pg_dump_path, '--format=custom'|'plain', '--host', …, '--port', …, '--username', …, '--dbname', …, ...--schema/--table], null, ['PGPASSWORD' => $password])`. Output goes to a temp file and then to the backup disk. Retention keeps the newest `backup.keep` per label.
-- Preflight runs `pg_dump --version` and compares it with `SHOW server_version_num`. pg_dump must be at least the server's major version. The result is shown on the Backups page.
+- `Jobs/Backup` runs `new Process([pg_dump_path, '--format=custom'|'plain', '--host', …, '--port', …, '--username', …, '--dbname', …, ...--schema/--table], null, ['PGPASSWORD' => $password])`. The connection's SSL settings go in `PGSSLMODE`/`PGSSLROOTCERT`/`PGSSLCERT`/`PGSSLKEY`. pg_dump writes straight onto the backup disk. Retention keeps the newest `backup.keep` per label.
+- Preflight runs `pg_dump --version` and compares it with `SHOW server_version_num`. pg_dump must be at least the server's major version. `GET api/{label}/backups` reports the result, and `POST` answers 422 with it instead of queueing.
 - Tests: the Process is built with an argument array and no password in the args (S20, asserted on the command line), retention, version-mismatch message. A real dump→`pg_restore` round-trip runs in the pgsql CI lane.
 - `docs/security.md` + README: restore through the CLI only.
 
 ### M4.4 Active sessions
 - `Drivers/Postgres/Sessions`: `pg_stat_activity WHERE datname = current_database()`, with `cancel(pid)` and `terminate(pid)`.
-- Admin only. Terminate requires S5. Both are audited. The docs say the DB user needs `pg_signal_backend` to signal other roles' backends.
+- Admin only. Terminate requires S5. Both are audited. Only sessions of the same login are signalled (`usename = current_user`), so no `pg_signal_backend` grant is needed.
 - Tests: list, cancel a sleeping backend (pgsql), non-admin gets 403.
 
 ### M4.5 Audit log viewer
-- `GET /api/audit` (admin): paginated, filterable by user, label, classification and date. A read-only page in the SPA.
+- `GET api/{label}/audit` (admin of `{label}`): paginated, filterable by user, label, action, classification, outcome and date, showing only rows from labels where the user is admin. A read-only page in the SPA (still to come).
 
 **M4 exit:** schedules survive overlap and failure, a backup round-trips through a CLI restore, every PRD §6 requirement has a passing test, and v1.0.0 is released.
 
@@ -390,21 +390,21 @@ Plain event classes, constructed with public properties (PHP 8.0-safe, no `reado
 
 | Req | Where tested | Milestone |
 |---|---|---|
-| S1–S4 | `tests/Feature/AccessTest.php` | M0 |
-| S5 | `PasswordConfirmationTest` | M2 |
-| S6 | `RateLimitTest` | M1/M2 |
-| S7 | `ConnectionAllowlistTest`, `/api/me` leak test | M0 |
-| S8–S10 | `QueryRunnerTest` (pgsql) | M1 |
-| S11 | `ClassifierEvasionTest` (pgsql): the DB rejects what the classifier misses and the role's grants forbid | M2 |
-| S12 | `RowsApiTest` injection cases | M1 |
-| S13 | `HiddenObjectsTest` | M1 |
-| S14 | `MaskerTest`, export masking | M1/M3 |
-| S15 | `ShellTest` CSP header, ESLint `no-v-html` | M0/M1 |
-| S16 | `DownloadTest` | M3 |
-| S17–S19 | `AuditTest` | M0 |
-| S20 | `BackupTest` | M4 |
-| S22 | `AuditChainTest` | M0 |
-| S21 | `RunJobTest` payload assertion | M3 |
+| S1–S4 | `Feature/AccessTest` | M0 |
+| S5 | `Feature/PasswordConfirmationTest`, plus the 423 cases in `Pgsql/QueryWritesTest`, `Pgsql/RowWriterTest`, `Pgsql/DdlApiTest`, `Pgsql/SessionsTest`, `Feature/ScheduleTest` | M2 |
+| S6 | `Feature/RateLimitTest` | M1/M2 |
+| S7 | `Feature/ConnectionAllowlistTest`, `Feature/MeTest` (no config leak) | M0 |
+| S8–S10 | `Pgsql/QueryRunnerTest`, `Pgsql/QueryApiTest` | M1 |
+| S11 | `Pgsql/ClassifierEvasionTest`: the DB rejects what the classifier misses and the role's grants forbid | M2 |
+| S12 | `Pgsql/RowsApiTest` injection cases, `Unit/RowsQueryTest`, `Unit/DdlBuilderTest`, `Pgsql/ExportJobTest` | M1 |
+| S13 | `Pgsql/HiddenObjectsTest`, `Unit/HiddenObjectsTest` | M1 |
+| S14 | `Unit/MaskerTest`, `Pgsql/MaskingTest`, export masking in `Pgsql/ExportJobTest` | M1/M3 |
+| S15 | `Feature/ShellTest` (CSP, no `v-html`), `Pgsql/CellXssTest` (cell values as JSON strings), ESLint `vue/no-v-html` | M0/M1 |
+| S16 | `Feature/DownloadTest` | M3 |
+| S17–S19 | `Feature/AuditTest` | M0 |
+| S20 | `Pgsql/BackupTest` | M4 |
+| S21 | `Feature/RunsTest` payload assertion | M3 |
+| S22 | `Feature/AuditChainTest`, `Pgsql/AuditChainConcurrencyTest` | M0 |
 
 ---
 

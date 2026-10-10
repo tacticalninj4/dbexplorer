@@ -8,7 +8,7 @@ use Illuminate\Database\Connection;
 use Symfony\Component\Process\Process;
 
 /**
- * pg_dump, the safe way (PRD §7.12, S20): the command is an argument array
+ * pg_dump, the safe way (PRD §7.10, S20): the command is an argument array
  * that never goes through a shell, and the password reaches it only through
  * the PGPASSWORD environment variable — never in the arguments, where a ps
  * or an error log would show it. The connection's sslmode, sslrootcert,
@@ -99,7 +99,7 @@ final class BackupTool
     /**
      * pg_dump must be at least the server's major version, or its output is
      * unreliable. Null when the pair is fine, a human-readable problem when
-     * not (PRD §7.12).
+     * not (PRD §7.10).
      */
     public function preflight(): ?string
     {

@@ -4,7 +4,7 @@
 |---|---|
 | Package | `tacticalninj4/dbexplorer` |
 | Status | Draft v0.1 |
-| Last updated | 2026-10-09 |
+| Last updated | 2026-10-11 |
 | Owner | Jhanarthananraja |
 
 ---
@@ -136,12 +136,13 @@ Every long operation becomes a **Run**, a row in `dbx_runs` with a type, status 
 - Dispatched to a configurable queue connection and queue name. If the queue driver is `sync`, the UI shows a warning that background features will block the request.
 - The UI polls for progress. Websockets are not required.
 - **Cancel:** the job stores its `pg_backend_pid()`. Cancelling calls `pg_cancel_backend(pid)` and marks the run as cancelled.
-- A Runs page lists everything: users see their own runs and admins see all runs.
+- A Runs page lists everything: users see their own runs, and admins of a label see every run on it. Anyone else's run is a 404, so run ids can't be probed.
+- Every run's job timeout is `limits.background.timeout`, which is also the statement timeout of background queries and exports.
 - Run types: `query` (background SELECT, results to a file), `export`, `import`, `script`, `backup`, `scheduled_query`.
 
 ### 7.6 Import / export (M3)
 - **Export:** a table, view or query result to CSV, JSON lines or SQL INSERTs. Rows are streamed in chunks from a server-side cursor, so memory stays flat. Masking rules (S14) apply.
-- **Import:** CSV into an existing table. The user uploads to the private disk, maps columns, and previews the first N rows. The job loads data with `COPY ... FROM STDIN` through PDO pgsql, in a transaction mode chosen by the user: all-or-nothing, or batches that skip bad rows and report them.
+- **Import:** CSV into an existing table. The user uploads to the private disk (content sniffed as `text/csv`, `text/plain`, `application/csv` or `text/x-csv`, at most `limits.import.max_upload_kb`), maps columns, and previews the first N rows. The job loads data with `COPY ... FROM STDIN` through PDO pgsql, in a transaction mode chosen by the user: all-or-nothing, or batches that skip bad rows and report them. The run reports `inserted`, `skipped` and `errors` (row number and database message, never the cell values).
 
 ### 7.7 Script runner (M3)
 - Multi-statement SQL scripts run as a Run.
@@ -155,20 +156,29 @@ Every long operation becomes a **Run**, a row in `dbx_runs` with a type, status 
 - Run in the editor, run in the background, or export results.
 
 ### 7.9 Scheduled queries (M4, admin)
-- A saved query plus a cron expression, using `dragonmantank/cron-expression`, which Laravel already ships.
+- A cron expression, using `dragonmantank/cron-expression`, which Laravel already ships, over a **snapshot** of a saved query.
+- **Approval snapshots the SQL.** Creating a schedule copies the saved query's SQL and typed parameters into it, with their hash, and records the approving admin. Later edits to the saved query change nothing until an admin re-approves with `POST api/{label}/schedules/{id}/resync`. Creating and re-syncing are audited with the approved SQL.
+- **Runs as the approver.** Each run re-resolves the approver's role. If they're no longer an admin of the label, or the snapshot is missing or doesn't match its hash, the schedule is disabled (audited) and `ScheduleFailed` fires.
+- **Read-only unless approved for more.** Runs use a read-only transaction. `allow_writes` permits DML and `allow_ddl` (implying `allow_writes`) permits DDL. Both are set only at approval, which needs a recent password confirmation (S5); SQL the classifier calls DML or DDL is refused without the matching flag.
+- Schedules that existed before snapshots are backfilled from their saved query but stay disabled and unapproved until an admin re-syncs them.
 - The package registers one scheduler entry, `dbx:schedule:tick`, which runs every minute and dispatches the schedules that are due. The host only needs the standard `schedule:run` cron.
-- Overlap protection per schedule through cache locks.
-- Results are kept as Runs. Optional notifications go out by mail, Slack or any Laravel notification channel on success, failure or a row-count threshold, for example "alert if > 0 rows".
+- Overlap protection per schedule through cache locks, released when the run ends, so a failed run is retried on the next due tick.
+- Results are kept as Runs. Optional mail notifications on success, failure or a row-count threshold, for example "alert if > 0 rows". Other channels can listen to the `ScheduleFailed` and `RunFinished` events.
 
 ### 7.10 Backups (M4, admin)
-- An on-demand or scheduled `pg_dump` of a connection, in custom or plain format, with an optional schema or table selection. Output goes to a configured disk.
-- On boot, the package checks for the `pg_dump` binary and its version, and the UI reports any problem.
+- An on-demand `pg_dump` of a label's database in custom format, written to the private `backup.disk`. (Plain format, schema or table selection and scheduled backups are not exposed in v1.)
+- A preflight checks the `pg_dump` binary and that its major version is at least the server's. The backups API reports the result, and `POST` answers 422 with the problem instead of queueing a dump that would fail.
+- The connection's password and SSL settings reach `pg_dump` only through the environment (`PGPASSWORD`, `PGSSLMODE`, …), never its arguments (S20).
 - Retention: keep the last N backups per connection.
 - Restore is documented as a CLI step and is not available in the UI (see Non-goals).
 
 ### 7.11 Active sessions (M4, admin)
 - A view of `pg_stat_activity` for the connection's database, showing query, state, duration and wait events.
-- Cancel (`pg_cancel_backend`) and terminate (`pg_terminate_backend`). Both are audited and terminate needs password re-confirm.
+- Cancel (`pg_cancel_backend`) and terminate (`pg_terminate_backend`), only for sessions of the same database login. Both are audited and terminate needs password re-confirm.
+
+### 7.12 Audit log viewer (M4, admin)
+- `GET api/{label}/audit`: paginated and filterable by user, label, action, classification, outcome and date range, read-only.
+- It needs the admin role on `{label}` and shows only rows from labels where the user is admin. Rows without a label show only to an admin of every configured label.
 
 ## 8. Architecture
 
@@ -180,13 +190,13 @@ Host Laravel app
      ├─ Driver seam: Introspector + Dialect   (PostgresDriver in v1; MySqlDriver in v2)
      ├─ QueryRunner (single statement, read-only tx, timeout, row cap)
      ├─ Classifier (UX only)   Masking   HiddenObjects
-     ├─ Jobs: RunQuery, Export, Import, RunScript, Backup  → dbx_runs
-     ├─ Console: dbx:schedule:tick, dbx:prune, dbx:install
+     ├─ Jobs: RunQuery, Export, Import, RunScript, Backup, RunScheduledQuery  → dbx_runs
+     ├─ Console: dbx:schedule:tick, dbx:prune, dbx:install, dbx:audit:verify
      └─ Metadata store (configurable connection): dbx_audit_log, dbx_runs,
         dbx_saved_queries, dbx_schedules, dbx_query_history
 ```
 
-- **Frontend:** a Vue 3 SPA that is built inside the package (Vite) and committed as compiled assets in `dist/`. Hosts publish it with `php artisan vendor:publish --tag=dbexplorer-assets`, or the package serves it from a route. The host never needs Node.
+- **Frontend:** a Vue 3 SPA that is built inside the package (Vite) and committed as compiled assets in `dist/`. The package serves it from a route, with no publish step. The host never needs Node.
 - **API:** JSON endpoints under the route prefix that use the host's session auth and CSRF. There is no separate token system.
 - **Driver seam:** `Introspector` (lists objects and describes them) and `Dialect` (pagination, quoting, DDL generation, cancel, timeout). These are the only places with Postgres-specific SQL, which keeps v2 MySQL support contained.
 - **Metadata tables:** all prefixed `dbx_`, created by publishable migrations on `dbexplorer.storage.connection`, which defaults to the app's default connection. Pointing it at a separate database keeps the audit log intact even if the explored database is damaged.
@@ -196,7 +206,7 @@ Host Laravel app
 | | Supported |
 |---|---|
 | Laravel | 9, 10, 11, 12, 13 |
-| PHP | 8.0 – 8.4 (per Laravel version's own range) |
+| PHP | 8.0 – 8.5 (per Laravel version's own range) |
 | PostgreSQL | 12+ (v1) |
 | MySQL | 8.0+ / MariaDB 10.6+ (v2) |
 | Browsers | Last 2 versions of evergreen browsers |
@@ -208,6 +218,8 @@ Implications:
 - Laravel 9 and PHP 8.0 no longer get security fixes upstream. The README will say that support for them is best-effort.
 
 ## 10. Configuration (sketch)
+
+The shipped file is `config/dbexplorer.php`; the README lists every key.
 
 ```php
 return [
@@ -268,7 +280,7 @@ Each milestone can be released on its own as a tagged pre-release.
 | Risk | Mitigation |
 |---|---|
 | App-level read-only can be bypassed by a crafted statement or function call | DB-level role separation (§5) is the primary control. The docs and `dbx:install` push for it, and the UI shows a warning when viewer and admin map to the same connection. |
-| The L9–13 / PHP 8.0–8.4 matrix slows development | Keep framework usage minimal and run the full matrix in CI. Revisit dropping L9 in 2027. |
+| The L9–13 / PHP 8.0–8.5 matrix slows development | Keep framework usage minimal and run the full matrix in CI. Revisit dropping L9 in 2027. |
 | Prebuilt assets get out of date with the source | CI rebuilds and fails if `dist/` differs from the build output. |
 | A queue that isn't running makes background features look broken | Show a heartbeat check in the UI ("no worker has picked up a job in N min"). |
 | Masking misses a sensitive column | The default rules are conservative, the docs tell users to audit their schema, and admins see a "columns not masked" report. |

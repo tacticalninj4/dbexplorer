@@ -16,7 +16,7 @@ use TacticalNinj4\DbExplorer\Role;
 use Throwable;
 
 /**
- * The backups API (PRD §7.12), admins only: the pg_dump preflight status
+ * The backups API (PRD §7.10), admins only: the pg_dump preflight status
  * and the stored dumps of this label, plus dispatching a new one. A dump
  * downloads through the runs' signed URL like any result (S16); restoring
  * is deliberately not an API — pg_restore is a CLI job for the operator,

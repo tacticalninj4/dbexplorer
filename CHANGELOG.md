@@ -1,18 +1,10 @@
 # Release Notes
 
-## [Unreleased](https://github.com/tacticalninj4/dbexplorer/compare/v1.0.0...1.x)
+## [Unreleased](https://github.com/tacticalninj4/dbexplorer/commits/main)
 
-### Security
-- Scheduled queries run an approved snapshot of their SQL, as the approving admin, in a read-only transaction unless the approval allowed writes (`allow_writes`) or DDL (`allow_ddl`, both needing a password confirmation). Editing a shared saved query after it was scheduled no longer changes what runs as admin. New `POST api/{label}/schedules/{id}/resync`. **Upgrading:** the migration disables existing schedules until an admin re-syncs them (docs/security.md §6).
-- The audit log viewer shows only rows from labels where the user is admin.
+The first full release, to be tagged 1.0.0 once verification passes: a PostgreSQL explorer, editor and automation package for Laravel 9–13 on PHP 8.0–8.5.
 
-### Fixed
-- A scheduled query's lock is released when its run ends, so it runs again on the next due tick (it waited for the background timeout before).
-
-
-## [v1.0.0](https://github.com/tacticalninj4/dbexplorer/compare/...v1.0.0) - 2026-10-09
-
-First full release: a Postgres explorer, editor and automation package for Laravel 9–13 (PHP 8.0–8.4).
+Every feature below works through the JSON API. The browser UI covers M0–M2 and the Runs page; screens for exports, background queries, CSV import, scripts, saved queries, schedules, backups, active sessions, the audit log, and the create-table and create-view forms are still to come.
 
 ### Explorer (M0–M1)
 - Auth-gated, CSP-hardened SPA (assets served from the package, no Node on the host) with per-label connections resolved from an allowlist.
@@ -23,17 +15,38 @@ First full release: a Postgres explorer, editor and automation package for Larav
 
 ### Writes (M2)
 - Inline row insert/edit/delete with optimistic concurrency (409 carries the current row), SQL preview before anything runs, and masked columns never editable.
-- DML and DDL in the editor behind a server-driven confirmation ladder (409 confirm → 423 password re-confirmation, S5) — with the database grants, not the classifier, as the real boundary (proven by evasion tests).
+- DML and DDL in the editor behind a server-driven confirmation ladder (409 confirm → 423 password re-confirmation, S5), with the database grants, not the classifier, as the real boundary (proven by evasion tests). Users without a stored password (SSO-only) can't confirm, so can't run destructive actions.
 - Schema forms with generated SQL, copy-as-migration, and `CREATE INDEX CONCURRENTLY` queued as a background run.
 
 ### Background work (M3)
-- Every long operation is a run: background queries, exports (CSV/JSONL/SQL INSERTs, masked, memory-flat through cursors), CSV imports (all-or-nothing or skip-bad-rows with savepoint retry), multi-statement scripts (transaction or step mode, per-statement outcomes), and `pg_dump` backups — with cancel that kills the Postgres backend, progress, signed short-lived downloads (S16), daily pruning and queue-health warnings.
+- Every long operation is a run: background queries, exports (CSV/JSONL/SQL INSERTs, masked, memory-flat through cursors), CSV imports (all-or-nothing or skip-bad-rows with savepoint retry), multi-statement scripts (transaction or step mode, per-statement outcomes), and `pg_dump` backups.
+- Cancel kills the Postgres backend mid-statement; progress, signed short-lived downloads (S16), daily pruning (scheduled by the package) and queue-health warnings.
+- `limits.background.timeout` is every run's job timeout and the statement timeout of background queries and exports. `limits.import.max_upload_kb` and `limits.import.batch` size CSV imports.
 
 ### Automation & ops (M4)
 - Saved queries with typed `:name` parameters (lexer-based rewriting, so literals never bind), private or shared per label.
-- Scheduled queries: one `->everyMinute()` tick, cache-lock overlap protection, creator-role re-checks, and mail notifications on success, failure or row thresholds.
-- Backups via pg_dump as an argument array with `PGPASSWORD` only in the environment (S20), version preflight, retention; restores deliberately stay a CLI job.
-- Active sessions (cancel/terminate, same-login only, audited) and the admin audit log viewer.
+- Scheduled queries: one `->everyMinute()` tick registered by the package, cache-lock overlap protection, and mail notifications on success, failure or row thresholds. A schedule runs an approved snapshot of its SQL as the approving admin, read-only unless approved with `allow_writes` (DML) or `allow_ddl` (DDL), each needing a password confirmation; `POST api/{label}/schedules/{id}/resync` re-approves the saved query's current SQL.
+- Backups via pg_dump as an argument array with the password and SSL settings only in the environment (`PGPASSWORD`, `PGSSL*`, S20), a version preflight (`POST` answers 422 rather than queueing a dump that would fail), and retention; restores deliberately stay a CLI job.
+- Active sessions (cancel/terminate, same-login only, audited) and the audit log viewer, scoped to labels where the user is admin.
+
+### Security
+Fixed before release, after an independent audit:
+- Scheduled queries re-read the saved query's live SQL, so a viewer could edit a shared query after an admin scheduled it and have it run as admin. Schedules now snapshot the SQL at approval (above). **Upgrading an earlier install:** the migration disables existing schedules until an admin re-syncs them (docs/security.md §6).
+- The audit log viewer showed rows from every label; it now shows only rows from labels where the user is admin.
+- Table exports quote their identifiers and resolve the table before exporting (S12).
+- A user without a stored password got a 500 on password confirmation; it's now a plain refusal (S5).
+
+### Fixed
+- Cancel stops background queries and exports mid-statement, not only between chunks.
+- A scheduled query's lock is released when its run ends, so a failed schedule runs again on the next due tick.
+- CSV uploads that libmagic reports as `application/csv` or `text/x-csv` are accepted.
+- A backup whose preflight fails is refused with the real cause instead of being queued to fail.
+- `pg_dump` connects with the connection's SSL settings.
+- An import's run reports `inserted`, `skipped` and `errors` (row number and database message, never cell values).
+
+### Tests and CI
+- One 512 MB memory limit for serial and parallel test runs; `intl` is a dev requirement for the arch tests.
+- New tests: cell values as plain JSON strings (S15), a backup restored with `pg_restore` into a fresh database, the package's own scheduler entries, and README tables checked against the config file and commands.
 
 ## [v0.1.0](https://github.com/tacticalninj4/dbexplorer/compare/...v0.1.0) - 202x-xx-xx
 
