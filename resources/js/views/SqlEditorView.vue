@@ -10,11 +10,14 @@ import { basicSetup } from 'codemirror';
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef } from 'vue';
 import { useRoute } from 'vue-router';
 import { api, ApiError, describeError, segment } from '../api';
+import ClassificationBadge from '../components/ClassificationBadge.vue';
 import DataGrid from '../components/DataGrid.vue';
+import EmptyState from '../components/EmptyState.vue';
+import BaseIcon from '../components/BaseIcon.vue';
 import ModalDialog from '../components/ModalDialog.vue';
 import PlanTree from '../components/PlanTree.vue';
+import ResultBar from '../components/ResultBar.vue';
 import { takeForEditor } from '../composables/editorInbox';
-import { formatDuration, formatNumber } from '../composables/format';
 import { findConnection } from '../composables/session';
 import { readStorage, writeStorage } from '../composables/storage';
 import { catalogCompletion } from '../sql/completion';
@@ -134,23 +137,37 @@ function highlight(dark: boolean): Extension {
     );
 }
 
+/** Mirrors the app.css tokens (panel, sunken, line, fg-subtle, accent). */
 function editorTheme(dark: boolean): Extension {
+    const t = dark
+        ? { bg: '#141417', fg: '#ededf0', gutter: '#141417', gutterFg: '#8d8d98', line: '#2a2a30', active: '#1a1a1e', activeGutter: '#222227', selection: '#0b3a55', tooltip: '#1a1a1e', pick: '#0ea5e9', onPick: '#03131d', error: '#5f1f1b' }
+        : { bg: '#ffffff', fg: '#18181b', gutter: '#ffffff', gutterFg: '#686871', line: '#e3e3e7', active: '#f7f7f8', activeGutter: '#f3f3f5', selection: '#cfe6f5', tooltip: '#ffffff', pick: '#0369a1', onPick: '#ffffff', error: '#fee4e2' };
+
     return [highlight(dark), EditorView.theme(
         {
-            '&': { height: '100%', fontSize: '13px', backgroundColor: dark ? '#09090b' : '#ffffff', color: dark ? '#f4f4f5' : '#18181b' },
+            '&': { height: '100%', fontSize: '13px', backgroundColor: t.bg, color: t.fg },
             '&.cm-focused': { outline: 'none' },
-            '.cm-scroller': { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' },
+            '.cm-scroller': { fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace', lineHeight: '1.6' },
+            '.cm-content': { padding: '8px 0' },
             '.cm-dbx-error': {
-                textDecoration: 'underline wavy #dc2626',
+                textDecoration: 'underline wavy #d92d20',
                 textUnderlineOffset: '3px',
-                backgroundColor: dark ? '#7f1d1d66' : '#fee2e2',
+                backgroundColor: t.error,
             },
-            '.cm-gutters': { backgroundColor: dark ? '#18181b' : '#fafafa', color: '#a1a1aa', borderRight: `1px solid ${dark ? '#27272a' : '#e4e4e7'}` },
-            '.cm-activeLine': { backgroundColor: dark ? '#18181b80' : '#f4f4f580' },
-            '.cm-activeLineGutter': { backgroundColor: dark ? '#27272a' : '#f4f4f5' },
-            '.cm-cursor': { borderLeftColor: dark ? '#f4f4f5' : '#18181b' },
-            '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': { backgroundColor: dark ? '#0c4a6e' : '#bae6fd' },
-            '.cm-tooltip': { backgroundColor: dark ? '#18181b' : '#ffffff', border: `1px solid ${dark ? '#3f3f46' : '#d4d4d8'}` },
+            '.cm-gutters': { backgroundColor: t.gutter, color: t.gutterFg, borderRight: `1px solid ${t.line}` },
+            '.cm-lineNumbers .cm-gutterElement': { padding: '0 8px 0 12px' },
+            '.cm-activeLine': { backgroundColor: t.active },
+            '.cm-activeLineGutter': { backgroundColor: t.activeGutter, color: t.fg },
+            '.cm-cursor, .cm-dropCursor': { borderLeftColor: t.fg, borderLeftWidth: '2px' },
+            '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': { backgroundColor: t.selection },
+            '.cm-matchingBracket': { backgroundColor: t.selection, outline: 'none' },
+            '.cm-tooltip': { backgroundColor: t.tooltip, color: t.fg, border: `1px solid ${t.line}`, borderRadius: '6px', overflow: 'hidden', boxShadow: '0 6px 16px -4px rgb(0 0 0 / 0.2)' },
+            '.cm-tooltip-autocomplete > ul': { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: '12px' },
+            '.cm-tooltip-autocomplete > ul > li': { padding: '2px 8px' },
+            '.cm-tooltip-autocomplete > ul > li[aria-selected]': { backgroundColor: t.pick, color: t.onPick },
+            '.cm-completionDetail': { opacity: '0.75', fontStyle: 'normal', marginLeft: '8px' },
+            '.cm-panels': { backgroundColor: t.tooltip, color: t.fg, borderColor: t.line },
+            '.cm-foldPlaceholder': { backgroundColor: t.active, border: `1px solid ${t.line}`, color: t.gutterFg },
         },
         { dark },
     )];
@@ -372,32 +389,28 @@ onBeforeUnmount(() => {
     view.value?.destroy();
 });
 
-const classificationClass: Record<Classification, string> = {
-    read: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
-    dml: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300',
-    ddl: 'bg-orange-100 text-orange-900 dark:bg-orange-950 dark:text-orange-300',
-    destructive: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300',
-    unknown: 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300',
+/** The confirm dialog (409) for each verdict: title, consequence, and the button that runs it. */
+const CONFIRM: Record<Classification, { title: string; text: string; action: string }> = {
+    read: { title: 'Run this statement?', text: 'The server asked for confirmation before running it.', action: 'Run statement' },
+    dml: { title: 'Change rows?', text: 'This statement inserts, updates or deletes rows. It takes effect as soon as it succeeds.', action: 'Run DML' },
+    ddl: { title: 'Change the schema?', text: 'This statement creates, alters or drops database objects. It takes effect as soon as it succeeds.', action: 'Run DDL' },
+    destructive: { title: 'Run a destructive statement?', text: "This statement drops, truncates, or changes every row of a table. It can't be undone from DbExplorer, and you'll be asked for your password.", action: 'Run destructive statement' },
+    unknown: { title: 'Run an unclassified statement?', text: 'DbExplorer could not tell what this statement does. Check it before running it.', action: 'Run statement' },
 };
-const classificationText: Record<Classification, string> = {
-    read: 'reads data',
-    dml: 'changes rows (DML)',
-    ddl: 'changes the schema (DDL)',
-    destructive: 'is destructive: it drops, truncates, or changes every row',
-    unknown: 'could not be classified',
-};
-const modKey = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl';
+const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent);
+const modKey = isMac ? '⌘' : 'Ctrl';
+const shiftKey = isMac ? '⇧' : 'Shift';
 </script>
 
 <template>
     <div class="flex min-h-0 flex-1 flex-col">
-        <div class="flex items-end gap-1 border-b border-zinc-200 px-2 pt-1.5 dark:border-zinc-800">
-            <div role="tablist" aria-label="Query tabs" class="flex min-w-0 gap-1 overflow-x-auto" @keydown="onTabKeydown">
+        <div class="flex shrink-0 items-end gap-1 border-b border-line bg-sunken px-2 pt-1.5">
+            <div role="tablist" aria-label="Query tabs" class="-mb-px flex min-w-0 gap-0.5 overflow-x-auto" @keydown="onTabKeydown">
                 <div
                     v-for="tab in tabs"
                     :key="tab.id"
-                    class="group flex items-center rounded-t-md border border-b-0 text-sm transition-colors duration-150"
-                    :class="tab.id === activeId ? 'border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900' : 'border-transparent text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'"
+                    class="group flex h-8 items-center rounded-t-md border text-sm transition-colors duration-100"
+                    :class="tab.id === activeId ? 'border-line border-b-panel bg-panel text-fg' : 'border-transparent text-fg-muted hover:bg-hover hover:text-fg'"
                 >
                     <button
                         :id="`dbx-sql-tab-${tab.id}`"
@@ -405,108 +418,123 @@ const modKey = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl';
                         role="tab"
                         :aria-selected="tab.id === activeId"
                         :tabindex="tab.id === activeId ? 0 : -1"
-                        class="rounded-tl-md px-3 py-1.5 whitespace-nowrap focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:outline-none"
+                        class="flex h-full cursor-default items-center gap-1.5 rounded-tl-md pr-1 pl-3 whitespace-nowrap outline-offset-[-2px]"
                         @click="switchTo(tab.id)"
                     >
-                        {{ tab.title }}<span v-if="runs.get(tab.id)?.status === 'running'" class="ml-1 text-sky-600 motion-safe:animate-pulse" aria-label="running">●</span>
+                        <span v-if="runs.get(tab.id)?.status === 'running'" class="dbx-spinner size-3" aria-hidden="true" />
+                        <BaseIcon v-else name="terminal" :size="12" class="text-fg-subtle" />
+                        {{ tab.title }}<span v-if="runs.get(tab.id)?.status === 'running'" class="sr-only">(running)</span>
                     </button>
                     <button
                         type="button"
-                        class="mr-1 rounded px-1 text-zinc-400 hover:text-zinc-900 focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:outline-none dark:hover:text-zinc-100"
+                        class="mr-1 grid size-5 cursor-default place-items-center rounded text-fg-subtle outline-offset-[-2px] hover:bg-hover hover:text-fg"
                         :aria-label="`Close ${tab.title}`"
+                        :title="`Close ${tab.title}`"
                         @click="closeTab(tab.id)"
                     >
-                        ×
+                        <BaseIcon name="x" :size="12" />
                     </button>
                 </div>
             </div>
-            <button type="button" class="mb-1 rounded px-2 py-1 text-zinc-500 hover:bg-zinc-100 focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:outline-none dark:hover:bg-zinc-800" aria-label="New query tab" @click="addTab()">+</button>
+            <button type="button" class="dbx-btn dbx-btn-ghost dbx-btn-icon dbx-btn-sm mb-1" aria-label="New query tab" title="New query tab" @click="addTab()"><BaseIcon name="plus" /></button>
         </div>
 
-        <div class="flex flex-wrap items-center gap-2 border-b border-zinc-200 bg-white px-3 py-2 text-sm dark:border-zinc-800 dark:bg-zinc-900">
-            <button type="button" class="dbx-btn dbx-btn-primary" :disabled="running" :title="`${modKey}+Enter`" @click="start(null)">
-                <span v-if="running" class="dbx-spinner mr-1.5 border-white/50 border-t-white" aria-hidden="true" />{{ running ? 'Running…' : 'Run' }}<kbd class="ml-2 text-xs opacity-75">{{ modKey }}↵</kbd>
+        <div class="dbx-toolbar">
+            <button type="button" class="dbx-btn dbx-btn-primary" :disabled="running" :title="`Run the statement at the cursor, or the selection (${modKey}+Enter)`" @click="start(null)">
+                <span v-if="running" class="dbx-spinner border-current/30 border-t-current" aria-hidden="true" />
+                <BaseIcon v-else name="play" />
+                {{ running ? 'Running…' : 'Run' }}<kbd class="dbx-kbd ml-0.5 opacity-80">{{ modKey }}↵</kbd>
             </button>
-            <button type="button" class="dbx-btn" :disabled="running" :title="`EXPLAIN: plans without running (${modKey}+Shift+Enter)`" @click="start('plain')">Explain</button>
+            <button type="button" class="dbx-btn" :disabled="running" :title="`EXPLAIN: plan without running (${modKey}+${shiftKey}+Enter)`" @click="start('plain')">
+                <BaseIcon name="plan" />Explain<kbd class="dbx-kbd ml-0.5 text-fg-subtle">{{ shiftKey }}{{ modKey }}↵</kbd>
+            </button>
             <button type="button" class="dbx-btn" :disabled="running" title="EXPLAIN ANALYZE: runs the statement, then rolls it back" @click="start('analyze')">Explain analyze</button>
-            <label v-if="role === 'admin'" class="ml-2 flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300" title="Show masked columns in clear. Every unmasked run is audited.">
-                <input v-model="unmask" type="checkbox">
-                Unmask columns
-                <span v-if="unmask" class="text-xs text-amber-700 dark:text-amber-400">(audited)</span>
-            </label>
-            <router-link :to="{ name: 'history', params: { label } }" class="dbx-link ml-auto">History</router-link>
+            <template v-if="role === 'admin'">
+                <span class="dbx-separator" aria-hidden="true" />
+                <label class="dbx-check" :class="unmask ? 'text-warning-fg' : ''" title="Show masked columns in clear. Every unmasked run is audited.">
+                    <input v-model="unmask" type="checkbox">
+                    <BaseIcon :name="unmask ? 'unlock' : 'lock'" :size="14" />
+                    Unmask columns
+                    <span v-if="unmask" class="text-xs">(audited)</span>
+                </label>
+            </template>
+            <span class="ml-auto hidden text-xs text-fg-subtle xl:inline">Runs the statement at the cursor, or the selection</span>
+            <router-link :to="{ name: 'history', params: { label } }" class="dbx-btn dbx-btn-ghost"><BaseIcon name="history" />History</router-link>
         </div>
 
         <div class="flex min-h-0 flex-1 flex-col">
-            <div ref="editorEl" class="h-[38vh] min-h-40 shrink-0 resize-y overflow-hidden border-b border-zinc-200 dark:border-zinc-800" />
+            <div ref="editorEl" class="h-[38vh] min-h-32 shrink-0 resize-y overflow-hidden border-b border-line bg-panel" />
 
-            <section class="flex min-h-0 flex-1 flex-col" aria-label="Result" aria-live="polite">
-                <p v-if="!run" class="p-4 text-sm text-zinc-500">Run a statement to see its result here.</p>
-                <p v-else-if="run.status === 'running'" class="flex items-center gap-2 p-4 text-sm text-zinc-500"><span class="dbx-spinner" aria-hidden="true" />Running…</p>
-                <p v-else-if="run.status === 'confirm'" class="p-4 text-sm text-zinc-500">Waiting for your confirmation…</p>
+            <section class="flex min-h-0 flex-1 flex-col bg-canvas" aria-label="Result" aria-live="polite">
+                <EmptyState v-if="!run" icon="terminal" title="Run a statement to see its result">
+                    Press <kbd class="dbx-kbd">{{ modKey }}↵</kbd> to run the statement under the cursor, or <kbd class="dbx-kbd">{{ shiftKey }}{{ modKey }}↵</kbd> to see its plan.
+                    Writes and schema changes ask you to confirm first.
+                </EmptyState>
+                <div v-else-if="run.status === 'running'" class="flex items-center gap-2 p-4 text-sm text-fg-muted" role="status"><span class="dbx-spinner" aria-hidden="true" />Running…</div>
+                <div v-else-if="run.status === 'confirm'" class="flex items-center gap-2 p-4 text-sm text-fg-muted" role="status"><BaseIcon name="clock" />Waiting for your confirmation…</div>
 
-                <div v-else-if="run.status === 'failed' && run.error" role="alert" class="m-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-100">
-                    <p class="flex flex-wrap items-baseline gap-2">
-                        <span class="font-semibold">Error</span>
-                        <span v-if="run.error.sqlstate" class="rounded bg-red-100 px-1.5 font-mono text-xs dark:bg-red-900">SQLSTATE {{ run.error.sqlstate }}</span>
-                        <span v-else-if="run.error.status === 403" class="text-xs">(not allowed)</span>
-                        <span v-else-if="run.error.status === 429" class="text-xs">(rate limited)</span>
-                    </p>
-                    <pre class="mt-1 font-sans whitespace-pre-wrap">{{ run.error.message }}</pre>
-                    <pre v-if="errorCaret" class="mt-2 overflow-x-auto rounded bg-white/70 p-2 font-mono text-xs text-zinc-800 dark:bg-zinc-900/70 dark:text-zinc-200"><span class="text-zinc-400">LINE {{ errorCaret.line }}: </span>{{ errorCaret.text }}
-<span class="text-zinc-400">{{ ' '.repeat(`LINE ${errorCaret.line}: `.length) }}</span><span class="font-bold text-red-600">{{ ' '.repeat(errorCaret.column) }}^</span></pre>
+                <div v-else-if="run.status === 'failed' && run.error" class="overflow-auto p-3">
+                    <div role="alert" class="dbx-callout dbx-callout-danger">
+                        <BaseIcon name="alert-circle" />
+                        <div class="min-w-0 flex-1">
+                            <p class="flex flex-wrap items-center gap-2">
+                                <span class="font-semibold">{{ run.error.status === 403 ? 'Not allowed' : run.error.status === 429 ? 'Rate limited' : 'Query failed' }}</span>
+                                <span v-if="run.error.sqlstate" class="rounded-sm border border-danger-line px-1.5 font-mono text-xs">SQLSTATE {{ run.error.sqlstate }}</span>
+                            </p>
+                            <pre class="mt-1 font-sans whitespace-pre-wrap">{{ run.error.message }}</pre>
+                            <pre v-if="errorCaret" class="mt-2 overflow-x-auto rounded-md border border-line bg-panel p-2 font-mono text-xs text-fg"><span class="text-fg-subtle">LINE {{ errorCaret.line }}: </span>{{ errorCaret.text }}
+<span class="text-fg-subtle">{{ ' '.repeat(`LINE ${errorCaret.line}: `.length) }}</span><span class="font-bold text-danger-fg">{{ ' '.repeat(errorCaret.column) }}^</span></pre>
+                        </div>
+                    </div>
                 </div>
 
                 <template v-else-if="run.result">
-                    <div class="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-zinc-200 px-3 py-1.5 text-sm dark:border-zinc-800">
-                        <span class="rounded px-1.5 py-0.5 text-xs font-medium" :class="classificationClass[run.result.classification]">{{ run.result.classification }}</span>
-                        <span v-if="run.result.explain" class="text-zinc-600 dark:text-zinc-300">{{ run.result.explain === 'analyze' ? 'EXPLAIN ANALYZE' : 'EXPLAIN' }}</span>
-                        <template v-else>
-                            <span class="tabular-nums">{{ formatNumber(run.result.row_count) }} {{ run.result.row_count === 1 ? 'row' : 'rows' }}</span>
-                            <span v-if="run.result.affected_rows !== null" class="tabular-nums">{{ formatNumber(run.result.affected_rows) }} affected</span>
-                        </template>
-                        <span class="text-zinc-500 tabular-nums">{{ formatDuration(run.result.duration_ms) }}</span>
-                        <span v-if="run.result.truncated" class="text-amber-700 dark:text-amber-400">Showing the first {{ formatNumber(run.result.row_count) }} rows: your row limit cut the rest.</span>
-                        <div role="tablist" aria-label="Result views" class="ml-auto flex gap-1">
-                            <button v-if="run.result.plan" type="button" role="tab" :aria-selected="resultTab === 'plan'" class="rounded px-2 py-0.5 transition-colors duration-150" :class="resultTab === 'plan' ? 'bg-zinc-200 dark:bg-zinc-700' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'" @click="resultTab = 'plan'">Plan</button>
-                            <button v-else type="button" role="tab" :aria-selected="resultTab === 'results'" class="rounded px-2 py-0.5 transition-colors duration-150" :class="resultTab === 'results' ? 'bg-zinc-200 dark:bg-zinc-700' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'" @click="resultTab = 'results'">Results</button>
-                            <button type="button" role="tab" :aria-selected="resultTab === 'messages'" class="rounded px-2 py-0.5 transition-colors duration-150" :class="resultTab === 'messages' ? 'bg-zinc-200 dark:bg-zinc-700' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'" @click="resultTab = 'messages'">
-                                Messages<span v-if="run.result.notices.length" class="ml-1 rounded-full bg-sky-600 px-1.5 text-xs text-white">{{ run.result.notices.length }}</span>
-                            </button>
+                    <DataGrid v-if="resultTab === 'results' && !run.result.plan && run.result.columns.length" :columns="run.result.columns" :rows="run.result.rows" empty-text="The query returned no rows">
+                        <template #toolbar><ResultBar v-model:view="resultTab" :result="run.result" /></template>
+                    </DataGrid>
+                    <template v-else>
+                        <div class="dbx-toolbar"><ResultBar v-model:view="resultTab" :result="run.result" /></div>
+                        <div v-if="resultTab === 'messages'" class="min-h-0 flex-1 overflow-auto p-3 text-sm">
+                            <p v-if="!run.result.notices_supported" class="text-fg-muted">Notices unavailable: this PHP database driver can't capture NOTICE messages.</p>
+                            <p v-else-if="run.result.notices.length === 0" class="text-fg-muted">No notices.</p>
+                            <ul v-else class="dbx-card divide-y divide-line-subtle font-mono text-xs">
+                                <li v-for="(notice, index) in run.result.notices" :key="index" class="px-3 py-1.5 whitespace-pre-wrap">{{ notice }}</li>
+                            </ul>
                         </div>
-                    </div>
-
-                    <div v-if="resultTab === 'messages'" class="overflow-auto p-3 text-sm">
-                        <p v-if="!run.result.notices_supported" class="text-zinc-500">Notices unavailable: this PHP database driver can't capture NOTICE messages.</p>
-                        <p v-else-if="run.result.notices.length === 0" class="text-zinc-500">No notices.</p>
-                        <ul v-else class="space-y-1 font-mono text-xs">
-                            <li v-for="(notice, index) in run.result.notices" :key="index" class="whitespace-pre-wrap">{{ notice }}</li>
-                        </ul>
-                    </div>
-                    <div v-else-if="run.result.plan" class="min-h-0 flex-1 overflow-auto">
-                        <PlanTree :plan="run.result.plan" :analyze="run.result.explain === 'analyze'" />
-                    </div>
-                    <DataGrid v-else-if="run.result.columns.length" :columns="run.result.columns" :rows="run.result.rows" />
-                    <p v-else class="p-4 text-sm text-zinc-500">The statement returned no result set.</p>
+                        <div v-else-if="run.result.plan" class="min-h-0 flex-1 overflow-auto">
+                            <PlanTree :plan="run.result.plan" :analyze="run.result.explain === 'analyze'" />
+                        </div>
+                        <EmptyState v-else icon="check-circle" :title="run.result.affected_rows !== null ? 'Statement completed' : 'Statement completed with no result set'">
+                            <template v-if="run.result.affected_rows !== null">{{ run.result.affected_rows === 1 ? '1 row' : `${run.result.affected_rows.toLocaleString()} rows` }} affected.</template>
+                        </EmptyState>
+                    </template>
                 </template>
             </section>
         </div>
 
-        <ModalDialog :open="confirm !== null" title="Run this statement?" @close="cancelConfirm">
+        <ModalDialog :open="confirm !== null" :title="confirm ? CONFIRM[confirm.classification].title : ''" wide @close="cancelConfirm">
             <template v-if="confirm">
-                <p class="mt-2 text-sm">
-                    This statement
-                    <span class="rounded px-1.5 py-0.5 text-xs font-medium" :class="classificationClass[confirm.classification]">{{ confirm.classification }}</span>
-                    {{ classificationText[confirm.classification] }}.
-                    <template v-if="confirm.explain === 'analyze'"> EXPLAIN ANALYZE runs it, then rolls it back.</template>
-                </p>
-                <p v-if="confirm.classification === 'destructive'" class="mt-2 text-sm text-amber-800 dark:text-amber-300">
-                    It is destructive, so you will also be asked for your password.
-                </p>
-                <pre class="mt-3 max-h-48 overflow-auto rounded bg-zinc-100 p-2 font-mono text-xs whitespace-pre-wrap dark:bg-zinc-800">{{ confirm.sql }}</pre>
-                <div class="mt-4 flex justify-end gap-2">
-                    <button type="button" class="dbx-btn" @click="cancelConfirm">Cancel</button>
-                    <button type="button" class="dbx-btn" :class="confirm.classification === 'destructive' ? 'dbx-btn-danger' : 'dbx-btn-primary'" @click="confirmed">Run it</button>
+                <div class="space-y-3">
+                    <div
+                        class="dbx-callout"
+                        :class="confirm.classification === 'destructive' ? 'dbx-callout-danger' : confirm.classification === 'read' ? 'dbx-callout-info' : 'dbx-callout-warning'"
+                    >
+                        <BaseIcon :name="confirm.classification === 'destructive' ? 'alert' : 'info'" />
+                        <div>
+                            <p class="flex flex-wrap items-center gap-2">Classified as <ClassificationBadge :value="confirm.classification" /></p>
+                            <p class="mt-1">
+                                {{ CONFIRM[confirm.classification].text }}
+                                <template v-if="confirm.explain === 'analyze'"> EXPLAIN ANALYZE runs it, then rolls it back.</template>
+                            </p>
+                        </div>
+                    </div>
+                    <pre class="dbx-code max-h-56 whitespace-pre-wrap">{{ confirm.sql }}</pre>
+                </div>
+                <div class="mt-4 flex items-center justify-end gap-2 border-t border-line pt-4">
+                    <button type="button" class="dbx-btn dbx-btn-ghost mr-auto" autofocus @click="cancelConfirm">Cancel</button>
+                    <button type="button" class="dbx-btn" :class="confirm.classification === 'destructive' ? 'dbx-btn-danger' : 'dbx-btn-primary'" @click="confirmed">
+                        <BaseIcon :name="confirm.classification === 'destructive' ? 'alert' : 'play'" />{{ CONFIRM[confirm.classification].action }}
+                    </button>
                 </div>
             </template>
         </ModalDialog>
