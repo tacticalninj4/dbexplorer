@@ -29,6 +29,10 @@
             <directory>./tests/Pgsql</directory>
         </testsuite>
     </testsuites>
+    <php>
+        <!-- The arch presets and the Laravel app rebuilt for every test need more than PHP's default 128M. -->
+        <ini name="memory_limit" value="512M"/>
+    </php>
     <source>
         <include>
             <directory suffix=".php">./src</directory>
