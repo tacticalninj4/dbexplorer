@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 use TacticalNinj4\DbExplorer\Http\Manifest;
 
+// Content-Type is compared lowercased: charset names are case-insensitive
+// (RFC 9110), and Symfony writes `UTF-8` or `utf-8` depending on its version.
+
 beforeEach(function () {
     app()['env'] = 'local';
 });
@@ -13,7 +16,7 @@ it('serves the entry script with its type and an immutable cache header', functi
 
     $response = $this->actingAs(makeUser())->get('/dbexplorer/'.$script)->assertOk();
 
-    expect($response->headers->get('Content-Type'))->toBe('text/javascript; charset=utf-8')
+    expect(strtolower((string) $response->headers->get('Content-Type')))->toBe('text/javascript; charset=utf-8')
         ->and($response->headers->get('Cache-Control'))->toContain('max-age=31536000')
         ->and($response->headers->get('Cache-Control'))->toContain('immutable')
         ->and($response->headers->get('Cache-Control'))->toContain('private')
@@ -23,9 +26,9 @@ it('serves the entry script with its type and an immutable cache header', functi
 
 it('serves the entry stylesheets as CSS', function () {
     foreach (app(Manifest::class)->entry()['css'] as $css) {
-        $this->actingAs(makeUser())->get('/dbexplorer/'.$css)
-            ->assertOk()
-            ->assertHeader('Content-Type', 'text/css; charset=utf-8');
+        $response = $this->actingAs(makeUser())->get('/dbexplorer/'.$css)->assertOk();
+
+        expect(strtolower((string) $response->headers->get('Content-Type')))->toBe('text/css; charset=utf-8');
     }
 });
 
@@ -45,11 +48,12 @@ it('serves only files listed in the manifest', function (string $uri) {
 ]);
 
 it('answers paths outside assets/ with the shell, never a file', function (string $uri) {
-    $this->actingAs(makeUser())->get($uri)
+    $response = $this->actingAs(makeUser())->get($uri)
         ->assertOk()
-        ->assertHeader('Content-Type', 'text/html; charset=UTF-8')
         ->assertDontSee('isEntry')
         ->assertDontSee('tacticalninj4/dbexplorer');
+
+    expect(strtolower((string) $response->headers->get('Content-Type')))->toBe('text/html; charset=utf-8');
 })->with(['/dbexplorer/.vite/manifest.json', '/dbexplorer/composer.json']);
 
 it('only resolves paths for manifest files', function () {
