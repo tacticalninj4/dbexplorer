@@ -385,10 +385,10 @@ const levelPadding = ['pl-2', 'pl-2', 'pl-5', 'pl-9'];
                     <li v-for="object in results" :key="`${object.schema}.${object.type}.${object.signature ?? object.name}`">
                         <router-link
                             :to="objectRoute(object)"
-                            class="flex items-baseline gap-2 px-3 py-1 hover:bg-zinc-100 focus-visible:bg-zinc-100 focus-visible:outline-none dark:hover:bg-zinc-800 dark:focus-visible:bg-zinc-800"
+                            class="flex items-baseline gap-2 px-3 py-1 transition-colors duration-100 hover:bg-zinc-100 focus-visible:bg-sky-100 focus-visible:text-sky-900 focus-visible:outline-none dark:hover:bg-zinc-800 dark:focus-visible:bg-sky-950 dark:focus-visible:text-sky-100"
                         >
                             <span class="truncate">{{ object.signature ?? object.name }}</span>
-                            <span class="ml-auto shrink-0 text-xs text-zinc-400">{{ object.schema }} · {{ object.type.replace('_', ' ') }}</span>
+                            <span class="ml-auto shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{{ object.schema }} · {{ object.type.replace('_', ' ') }}</span>
                         </router-link>
                     </li>
                 </ul>
@@ -407,10 +407,10 @@ const levelPadding = ['pl-2', 'pl-2', 'pl-5', 'pl-9'];
                         :aria-expanded="node.expandable ? node.expanded : undefined"
                         :aria-selected="node.kind === 'object' ? node.selected : undefined"
                         :tabindex="node.kind === 'message' ? undefined : node.key === tabStop ? 0 : -1"
-                        class="flex cursor-default items-center gap-1.5 py-1 pr-2 outline-none select-none"
+                        class="flex cursor-default items-center gap-1.5 py-1 pr-2 transition-colors duration-100 outline-none select-none"
                         :class="[
                             levelPadding[node.level],
-                            node.kind === 'message' ? 'text-zinc-400 italic' : 'hover:bg-zinc-100 focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-inset dark:hover:bg-zinc-800',
+                            node.kind === 'message' ? 'text-zinc-500 italic dark:text-zinc-400' : 'hover:bg-zinc-100 focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-inset dark:hover:bg-zinc-800',
                             node.selected ? 'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-100' : '',
                             node.kind === 'object' ? 'cursor-pointer' : '',
                         ]"
@@ -418,9 +418,9 @@ const levelPadding = ['pl-2', 'pl-2', 'pl-5', 'pl-9'];
                         @focus="node.kind !== 'message' && (focusedKey = node.key)"
                         @keydown="onKeydown($event, node)"
                     >
-                        <span aria-hidden="true" class="w-3 shrink-0 text-xs text-zinc-400">{{ node.expandable ? (node.expanded ? '▾' : '▸') : '' }}</span>
+                        <span aria-hidden="true" class="w-3 shrink-0 text-xs text-zinc-500 transition-transform duration-150 ease-pop motion-reduce:transition-none dark:text-zinc-400" :class="node.expanded ? 'rotate-90' : ''">{{ node.expandable ? '▸' : '' }}</span>
                         <span class="truncate" :class="node.kind === 'schema' ? 'font-medium' : node.kind === 'group' ? 'text-zinc-600 dark:text-zinc-300' : ''">{{ node.text }}</span>
-                        <span v-if="node.hint" class="ml-auto shrink-0 text-xs text-zinc-400">{{ node.hint }}</span>
+                        <span v-if="node.hint" class="ml-auto shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{{ node.hint }}</span>
                     </li>
                 </ul>
             </template>

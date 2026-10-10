@@ -41,3 +41,53 @@ onMounted(() => sync(props.open));
         </div>
     </dialog>
 </template>
+
+<style scoped>
+dialog {
+    transition:
+        opacity 180ms cubic-bezier(0.23, 1, 0.32, 1),
+        transform 180ms cubic-bezier(0.23, 1, 0.32, 1),
+        display 180ms allow-discrete,
+        overlay 180ms allow-discrete;
+}
+
+/* Exit state (also the exit target for the backdrop fade below). */
+dialog:not([open]) {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+}
+
+/* Enter start: never scale from 0 — a barely-visible shape feels physical. */
+@starting-style {
+    dialog[open] {
+        opacity: 0;
+        transform: translateY(6px) scale(0.97);
+    }
+
+    dialog[open]::backdrop {
+        opacity: 0;
+    }
+}
+
+dialog::backdrop {
+    transition:
+        opacity 180ms ease,
+        display 180ms allow-discrete,
+        overlay 180ms allow-discrete;
+}
+
+dialog:not([open])::backdrop {
+    opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    dialog,
+    dialog::backdrop {
+        transition-property: opacity, display, overlay;
+    }
+
+    dialog:not([open]) {
+        transform: none;
+    }
+}
+</style>

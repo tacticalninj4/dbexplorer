@@ -1,6 +1,6 @@
 {
   "resources/js/app.ts": {
-    "file": "assets/app-PZRkVqVr.js",
+    "file": "assets/app-CAJj7R4e.js",
     "name": "app",
     "src": "resources/js/app.ts",
     "isEntry": true,
@@ -8,11 +8,11 @@
       "resources/js/views/SqlEditorView.vue"
     ],
     "css": [
-      "assets/app-Pu93Herm.css"
+      "assets/app-BenfdRLu.css"
     ]
   },
   "resources/js/views/SqlEditorView.vue": {
-    "file": "assets/SqlEditorView-Dnyz5-xf.js",
+    "file": "assets/SqlEditorView-NSskVfXc.js",
     "name": "SqlEditorView",
     "src": "resources/js/views/SqlEditorView.vue",
     "isDynamicEntry": true,

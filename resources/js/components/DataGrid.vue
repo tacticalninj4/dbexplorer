@@ -126,20 +126,22 @@ function needsValue(op: FilterOperator): boolean {
                     <button type="button" class="dbx-btn" :aria-expanded="showColumns" @click="showColumns = !showColumns">
                         Columns<span v-if="hidden.size" class="ml-1 text-xs text-zinc-500">({{ columns.length - hidden.size }}/{{ columns.length }})</span>
                     </button>
-                    <div
-                        v-if="showColumns"
-                        class="absolute right-0 z-20 mt-1 max-h-80 w-64 overflow-auto rounded-md border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
-                        @keydown.esc="showColumns = false"
-                    >
-                        <fieldset>
-                            <legend class="sr-only">Visible columns</legend>
-                            <label v-for="column in columns" :key="column.name" class="flex items-center gap-2 rounded px-1 py-0.5 hover:bg-zinc-100 dark:hover:bg-zinc-800">
-                                <input type="checkbox" :checked="!hidden.has(column.name)" @change="toggleColumn(column.name)">
-                                <span class="truncate">{{ column.name }}</span>
-                                <span class="ml-auto text-xs text-zinc-400">{{ column.type }}</span>
-                            </label>
-                        </fieldset>
-                    </div>
+                    <Transition name="dbx-pop">
+                        <div
+                            v-if="showColumns"
+                            class="absolute right-0 z-20 mt-1 max-h-80 w-64 overflow-auto rounded-md border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+                            @keydown.esc="showColumns = false"
+                        >
+                            <fieldset>
+                                <legend class="sr-only">Visible columns</legend>
+                                <label v-for="column in columns" :key="column.name" class="flex items-center gap-2 rounded px-1 py-0.5 transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800">
+                                    <input type="checkbox" :checked="!hidden.has(column.name)" @change="toggleColumn(column.name)">
+                                    <span class="truncate">{{ column.name }}</span>
+                                    <span class="ml-auto text-xs text-zinc-500 dark:text-zinc-400">{{ column.type }}</span>
+                                </label>
+                            </fieldset>
+                        </div>
+                    </Transition>
                 </div>
             </div>
         </div>
@@ -183,7 +185,7 @@ function needsValue(op: FilterOperator): boolean {
             <table class="min-w-full border-separate border-spacing-0 text-sm">
                 <thead class="sticky top-0 z-10 bg-zinc-100 dark:bg-zinc-900">
                     <tr>
-                        <th scope="col" class="w-px border-b border-zinc-200 px-2 py-1.5 text-right text-xs font-normal text-zinc-400 dark:border-zinc-800">#</th>
+                        <th scope="col" class="w-px border-b border-zinc-200 px-2 py-1.5 text-right text-xs font-normal text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">#</th>
                         <th
                             v-for="{ column, index } in visible"
                             :key="index"
@@ -194,7 +196,7 @@ function needsValue(op: FilterOperator): boolean {
                             <button
                                 v-if="sortable && !column.masked"
                                 type="button"
-                                class="inline-flex items-center gap-1 rounded hover:text-sky-700 focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:outline-none dark:hover:text-sky-400"
+                                class="inline-flex items-center gap-1 rounded transition-colors duration-150 hover:text-sky-700 focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:outline-none dark:hover:text-sky-400"
                                 :title="`Sort by ${column.name}`"
                                 @click="emit('sort', column.name)"
                             >
@@ -205,7 +207,7 @@ function needsValue(op: FilterOperator): boolean {
                                 <span>{{ column.name }}</span>
                                 <span v-if="column.masked" class="rounded bg-zinc-200 px-1 text-[10px] font-normal tracking-wide text-zinc-600 uppercase dark:bg-zinc-800 dark:text-zinc-400" title="Masked: can't be sorted or filtered">masked</span>
                             </span>
-                            <span class="block text-xs font-normal text-zinc-400">{{ column.type }}</span>
+                            <span class="block text-xs font-normal text-zinc-500 dark:text-zinc-400">{{ column.type }}</span>
                         </th>
                     </tr>
                 </thead>
@@ -213,14 +215,19 @@ function needsValue(op: FilterOperator): boolean {
                     <tr
                         v-for="(row, r) in rows"
                         :key="rowOffset + r"
-                        class="odd:bg-white even:bg-zinc-50/60 hover:bg-sky-50 dark:odd:bg-zinc-950 dark:even:bg-zinc-900/40 dark:hover:bg-sky-950/40"
-                        :class="selectable ? 'cursor-pointer' : ''"
+                        class="transition-colors duration-100"
+                        :class="[
+                            selectable ? 'cursor-pointer' : '',
+                            selectable && r === selected
+                                ? 'bg-sky-100 hover:bg-sky-200/60 dark:bg-sky-950/70 dark:hover:bg-sky-900/50'
+                                : 'odd:bg-white even:bg-zinc-50/60 hover:bg-sky-100/70 dark:odd:bg-zinc-950 dark:even:bg-zinc-900/40 dark:hover:bg-sky-950/50',
+                        ]"
                         :aria-selected="selectable ? r === selected : undefined"
                         :tabindex="selectable ? 0 : undefined"
                         @click="selectable && emit('rowClick', r)"
                         @keydown.enter="selectable && emit('rowClick', r)"
                     >
-                        <td class="border-b border-zinc-100 px-2 py-1 text-right align-top text-xs text-zinc-400 tabular-nums dark:border-zinc-800/60">{{ rowOffset + r + 1 }}</td>
+                        <td class="border-b border-zinc-100 px-2 py-1 text-right align-top text-xs text-zinc-500 tabular-nums dark:border-zinc-800/60 dark:text-zinc-400">{{ rowOffset + r + 1 }}</td>
                         <td
                             v-for="{ column, index } in visible"
                             :key="index"
@@ -235,10 +242,51 @@ function needsValue(op: FilterOperator): boolean {
                 </tbody>
             </table>
             <p v-if="!loading && rows.length === 0" class="p-6 text-center text-sm text-zinc-500 dark:text-zinc-400">No rows.</p>
-            <div v-if="loading" class="pointer-events-none absolute inset-0 flex items-start justify-center bg-white/50 pt-10 dark:bg-zinc-950/50">
-                <span class="rounded bg-white px-3 py-1 text-sm shadow dark:bg-zinc-800">Loading…</span>
-            </div>
+            <Transition name="dbx-fade">
+                <div v-if="loading" class="pointer-events-none absolute inset-0 flex items-start justify-center bg-white/50 pt-10 dark:bg-zinc-950/50">
+                    <span class="flex items-center gap-2 rounded bg-white px-3 py-1 text-sm shadow dark:bg-zinc-800"><span class="dbx-spinner" aria-hidden="true" />Loading…</span>
+                </div>
+            </Transition>
         </div>
         <slot name="footer" />
     </div>
 </template>
+
+<style scoped>
+/* Popovers scale in from their trigger, not from center. */
+.dbx-pop-enter-active,
+.dbx-pop-leave-active {
+    transform-origin: top right;
+    transition:
+        opacity 150ms cubic-bezier(0.23, 1, 0.32, 1),
+        transform 150ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.dbx-pop-enter-from,
+.dbx-pop-leave-to {
+    opacity: 0;
+    transform: scale(0.95);
+}
+
+.dbx-fade-enter-active,
+.dbx-fade-leave-active {
+    transition: opacity 150ms ease;
+}
+
+.dbx-fade-enter-from,
+.dbx-fade-leave-to {
+    opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .dbx-pop-enter-active,
+    .dbx-pop-leave-active {
+        transition-property: opacity;
+    }
+
+    .dbx-pop-enter-from,
+    .dbx-pop-leave-to {
+        transform: none;
+    }
+}
+</style>

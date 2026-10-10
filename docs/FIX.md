@@ -1,0 +1,484 @@
+# DbExplorer — Fix List
+
+| | |
+|---|---|
+| Verified commit | `2c53133` (main, 2026-10-10) |
+| Sources | Release verifier (test matrix, traceability, docs), independent security audit, end-to-end browser test |
+| Status | 23 fixes **applied** (batches 1–3) · 2 **not started** (batch 4: F24, F25) |
+
+## How to read this
+
+Each finding has an ID, its severity, the evidence for it, the fix, the **reasoning** behind that fix, and a status:
+
+- **APPLIED**: merged into `main`, with the commit listed. Batch 1 was applied and merged before the instruction to write fixes up first. Any of those commits can be undone on its own with `git revert <sha>`.
+- **DONE ON BRANCH**: committed and verified on a fix branch, but **not merged into `main`** yet.
+- **IN PROGRESS**: work exists only as uncommitted changes in a worktree under `../dbexplorer-worktrees/`. Nothing of it is on `main`.
+- **NOT STARTED**: proposal only.
+
+Severity runs from **High** to **Info**. A **High** finding is exploitable or breaks a core promise.
+
+---
+
+## 1. Security and correctness (Batch 1)
+
+### F1 — HIGH — Viewer-authored SQL runs as admin through schedules · APPLIED `523d722`
+**Evidence.** The audit's proof of concept ran these steps:
+1. A viewer shares the saved query `SELECT 1`.
+2. An admin schedules it.
+3. The viewer edits the saved query to `DROP TABLE …`.
+4. The next run of `dbx:schedule:tick` executes the edited SQL as `admin` on the admin connection, and the table is gone.
+
+`RunScheduledQuery` re-read the saved query's current SQL on every run. It applied no classification gate. `creatorIsAdmin` checked who created the schedule, not who wrote the SQL.
+
+**Fix.**
+- **Snapshot and approve:**
+  - A schedule now stores its own snapshot of the SQL, typed params and `sql_hash`, plus `approved_by` and `approved_at`. These are added by migration `000006`.
+  - Later edits to the saved query don't change the schedule. To pick up a newer version, an admin explicitly re-approves it with `POST schedules/{id}/resync`, which is audited.
+  - Each run executes as the **approver**. If the approver is no longer an admin, the schedule is disabled, the event is audited, and `ScheduleFailed` fires.
+- **Writes and DDL:**
+  - Scheduled runs are **read-only** by default.
+  - DML needs `allow_writes` and DDL needs `allow_ddl`. An admin sets these at approval time, and granting either one requires password re-confirmation (S5).
+- **Existing rows:** existing schedules are backfilled from their saved query but left **disabled and unapproved**.
+
+**Reasoning.**
+- **The snapshot closes the hole.** The bug was a live link from privileged execution to SQL that a less privileged user can still edit. You chose the snapshot over "own queries only" because "own queries only" keeps the live link.
+- **The approver is who signed off on the SQL.** Running as the approver ties the privilege to that person, rather than to whoever happened to create the row.
+- **Read-only by default** means even a mistakenly approved schedule can't write unless someone explicitly allowed it. At run time there's no user present to re-confirm a password, so the S5 check moves to approval time.
+- **Disabling backfilled rows fails safe.** Silently trusting SQL that nobody approved under the new rules would reopen the hole.
+
+**Tests.** The exact proof of concept, now failing to drop anything. Plus: a query made private after scheduling, resync permissions and audit, writes rejected without `allow_writes`, the 423 on approving writes, a demoted approver, and backfilled rows staying disabled.
+
+### F2 — HIGH — Cancel didn't stop background queries or exports · APPLIED `2633dcd`
+**Evidence.** In the browser test, cancelling `SELECT pg_sleep(60)` from the Runs page left the run "running". The backend kept sleeping in `FETCH … FROM dbx_cur` and the run only showed "cancelled" after 60 s. The run's `pid` was `NULL`: `RunQuery` and the export path never called `trackBackend()`.
+
+**Fix.**
+- **Export path:** `QueryRunner::stream()` takes an `$onBegin` hook, and `ExportsToDisk` uses it to record the pid **before** the cursor opens.
+- **Every job type:** `TracksRun` stores the pid before `process()`, which also covers scheduled queries.
+- **Tests:** new end-to-end cancel tests for a background query and for an export. Each uses a real `queue:work` child process and asserts the backend is gone within 20 s.
+
+**Reasoning.**
+- **Recording the pid first is the only way to cancel mid-statement.** `pg_cancel_backend` needs the backend's pid. If the pid is stored after the long statement starts, or never stored, nothing interrupts it, and a cancel button that doesn't cancel is worse than none.
+- **The fix belongs in the shared concern.** Putting it in the concern rather than in each job keeps any future job type from repeating the bug.
+
+**Why the old tests passed.**
+- The runs test used a test-only `RunStatements` job, which called `trackBackend()` itself.
+- The export test cancelled between chunks through the flag, never through `pg_cancel_backend`.
+- So the bug lived exactly in the paths those tests didn't use. The new tests drive the real jobs.
+
+### F3 — MEDIUM — Admin on one label could read every label's audit log · APPLIED `523d722`
+**Evidence.** A user who is admin on `main` but has no role on `prod` read `prod`'s audit rows, including a literal secret in the SQL text. `AuditController` checked the role on the URL's label, but the query had no label filter, and `?label=` accepted any label.
+
+**Fix.**
+- Rows are limited to labels where the current user is admin.
+- Rows without a label need admin on every label.
+- `?label=` naming a label outside that set returns an empty page.
+
+**Reasoning.**
+- **Audit rows hold SQL text,** which can include literals, so reading them is as sensitive as reading the data itself.
+- **Authorization follows the data.** It has to match each row's label, not the label in the URL.
+- **An empty page, not a 403,** avoids confirming which other labels exist.
+
+### F4 — MEDIUM — CSV import rejected on PHP 8.0 · APPLIED `798f442`
+**Evidence.** On PHP 8.0, finfo reports `application/csv`. The rule `mimetypes:text/csv,text/plain` rejected it, so 5 import tests failed in the L9/PHP 8.0 lane.
+
+**Fix.** Accept `text/csv`, `text/plain`, `application/csv` and `text/x-csv`. `application/vnd.ms-excel` is deliberately left out.
+
+**Reasoning.**
+- **These are the MIME strings real libmagic versions report for CSV.** The upload is still parsed as CSV and size-capped, so widening the type list adds no attack surface.
+- **`vnd.ms-excel` stays out.** finfo only reports it for binary `.xls` files, which would fail parsing anyway.
+
+### F5 — MEDIUM — Users without a password got a 500 on password confirmation · APPLIED `8becd54`
+**Evidence.** On Laravel 10 / PHP 8.3: `RuntimeException: This password does not use the Bcrypt algorithm.` when the stored password is `null`, which is the normal case for SSO-only users. Access was still denied, but with a 500.
+
+**Fix.** A `null` or empty stored password returns the generic 422 for a wrong password, is audited, and never reaches the hasher.
+
+**Reasoning.**
+- **No stored password means confirmation can't succeed,** so treating it as a failed confirmation is correct and stays fail-closed.
+- **The 500 had two problems.** It's noisy for operators, and on some hasher versions an exception path is the kind of thing that eventually behaves inconsistently.
+- **Documented consequence:** SSO and LDAP users can't do destructive actions unless the host sets `confirm_password=false`.
+
+### F6 — MEDIUM — A backup was queued even when its preflight said it would fail · APPLIED `d80b6be`
+**Evidence.**
+- `GET backups` reported that pg_dump 17 is older than the server's 18, but `POST backups` still queued the job.
+- The run then failed with "failed unexpectedly", and the real cause appeared only in the log.
+- Separately, the preflight test faked a `pg_dump` 12.9 binary, which isn't older than a Postgres 12 server, so the test would fail in CI's Laravel 9 lanes.
+
+**Fix.**
+- `POST backups` returns 422 with the preflight message and queues nothing.
+- A new `RunFailed` exception stores the real cause, with connection details redacted.
+- The test's fake binary version is now the server's major version minus one.
+
+**Reasoning.** Refusing upfront gives the operator the actionable reason ("pg_dump 17 < server 18") at the moment they ask for the backup, instead of a failed run to dig into later. Redacting the stored error keeps S7, since connection config never leaves the server.
+
+### F7 — MEDIUM (UX) — Rows skipped during import were invisible · APPLIED `422f518`
+**Evidence.** In skip mode, bad rows were recorded in `meta.errors`, but neither the runs API nor the Runs page showed them.
+
+**Fix.**
+- The runs API exposes `inserted`, `skipped`, and up to 100 `errors` as `{row, error}`. Cell values are never included.
+- A transaction-mode failure now reads "Row N: …", with values redacted.
+
+**Reasoning.**
+- **A silent skip loses data.** Skip mode is only safe if users can see what was skipped.
+- **Row number plus message is enough to act on.** It means the user can fix the source file.
+- **No cell values.** Leaving them out means error output can never become a channel for masked or sensitive data.
+
+### F8 — LOW (S12) — Export identifiers weren't escaped · APPLIED `3d3380e`
+**Evidence.**
+- `ExportController` built `"schema"."name"` without doubling embedded quotes.
+- `ExportWriter` wrote table and column names raw into `.sql` INSERT lines.
+- A viewer produced an export whose INSERT lines contained an extra statement they chose. Anyone restoring that file, including an admin who downloads label exports, would run it.
+
+**Fix.**
+- Both places use the shared `RowsQuery::quoteIdentifier`.
+- The table is resolved through `Introspector::rowSource`, so hidden or missing tables get the same 404 as everywhere else.
+- **Test:** export a table with hostile table and column names, restore the `.sql` file, and check that exactly the original rows come back.
+
+**Reasoning.**
+- **This gave no new read power.** The read-only transaction and hidden-object checks still applied.
+- **But it turned an export into a stored-injection vector against whoever restores it.**
+- **One quoting helper everywhere** is the S12 rule. This was the one place that didn't follow it.
+
+### F9 — LOW — pg_dump ignored the connection's `sslmode` · APPLIED `955a903`
+**Evidence.** A connection configured with `sslmode=require` or `verify-full` still dumped with libpq's default `prefer`, so the dump could travel unencrypted.
+
+**Fix.** Pass `PGSSLMODE`, `PGSSLROOTCERT`, `PGSSLCERT` and `PGSSLKEY` from the connection config in the process **environment**. Nothing goes into the argument list.
+
+**Reasoning.**
+- **Transport parity.** A backup should be at least as protected in transit as the app's own connection.
+- **Environment variables, not arguments.** Arguments are visible in the process list, which is the same S20 rule already applied to `PGPASSWORD`.
+
+### F10 — Type coverage below 100% · APPLIED `116ed13`, `523d722`
+**Evidence.** `composer test:types` reported 98.6%, below the required 100%. The gaps were in `ExportWriter`, `RunsController`, `ImportController` and `ScheduledQueryFinished`.
+
+**Fix.** Native return and parameter types on those methods.
+
+**Reasoning.** CI's tooling lane enforces 100%, so `main` was red. The types are also documentation the static analyser can enforce.
+
+### F11 — `toBeList()` isn't available on Pest 1 and 2 · APPLIED `1b02355`
+**Evidence.** The S20 backup test failed in the Laravel 9 and 10 lanes with `Call to a member function toBeList() on array`.
+
+**Fix.** Replace `toBeList()` with an assertion that exists on Pest 1 through 5.
+
+**Reasoning.** Shared tests must use the Pest 1 API subset (TESTING.md §6). The test itself was right; only the matcher wasn't portable.
+
+### F12 — Parallel test workers ran out of memory at 128M · APPLIED `6e2e50e`
+**Evidence.** After the batch 1 merges, one parallel worker crashed intermittently at PHP's default 128M.
+
+**Fix.** Parallel workers get 512M.
+
+**Reasoning.** The suite boots a full Laravel app per test plus the arch presets. 128M is too tight for 1,300+ tests, not a sign of a leak. **See F15:** this should become one mechanism shared with serial runs.
+
+---
+
+## 2. Getting CI green (Batch 2)
+
+### F13 — `PruneTest` fails on Laravel 9–11 · APPLIED `c2c93a3`
+**Evidence.** 5 tests fail with `Failed asserting that '' contains "pruned 2 expired result files"`, because `Artisan::output()` is empty on Laravel 9–11. They pass on Laravel 12 and 13. This is unchanged since `2c53133`.
+
+**Proposed fix.**
+1. Find the root cause first.
+2. The leading suspect is the test reading `Artisan::output()` after `$this->artisan('migrate')` in `beforeEach`. In older Laravel versions, the console kernel's last-output buffer belongs to the most recent call, and it's empty when the test-facing `artisan()` mock is used.
+3. Then assert through `$this->artisan('dbx:prune')->expectsOutputToContain(...)`, which works on every supported version. Alternatively, assert the side effects (files and rows deleted) and not the wording.
+
+**Reasoning.**
+- **Fix the test, not the command, if the command is fine.** The behaviour is correct on all versions; only how the test reads the output differs.
+- **Asserting side effects is more robust anyway.** The output text is cosmetic.
+
+**Applied.**
+- **Root cause, confirmed:** on Laravel 9–11, a finished `$this->artisan('migrate')` leaves its mocked `OutputStyle` bound in the container. That makes the later `Artisan::output()` empty. Laravel 12 removes the binding, which is why only 12 and 13 passed.
+- **Change:** `beforeEach` now migrates with `Artisan::call('migrate')`, as `AuditChainTest` already does.
+- **No assertion was changed,** so the test is as strict as before and now true on every version.
+
+### F14 — `AssetTest` charset case · APPLIED `b9d7f73`
+**Evidence.** On Laravel 11 / PHP 8.4 the test expects `charset=UTF-8` and gets `charset=utf-8`.
+
+**Proposed fix.** Compare the `Content-Type` case-insensitively, or parse the media type and charset separately.
+
+**Reasoning.** Charset names are case-insensitive by RFC, and Symfony changed its casing between versions. The test should assert meaning, not casing.
+
+**Applied.** All three `Content-Type` checks in `AssetTest` compare the lowercased header, with a comment citing RFC 9110.
+
+### F15 — Serial test runs run out of memory at 128M · APPLIED `38c843e`
+**Evidence.** Running `vendor/bin/pest` serially exhausts 128M. F12 fixed only parallel workers.
+
+**Work so far.** `phpunit.xml.dist` gains `<php><ini name="memory_limit" value="512M"/></php>`. It's uncommitted.
+
+**Remaining.**
+- Confirm Pest 1–5 and `--parallel` honour the ini setting.
+- Then remove the separate mechanism from F12, so there's **one** setting.
+
+**Reasoning.**
+- **One setting in `phpunit.xml.dist`** applies to contributors, CI and both run modes.
+- **Two mechanisms drift apart.** Fixing parallel runs but not serial ones is exactly how the F12 bug happened.
+
+**Applied.**
+- **The setting:** `<ini name="memory_limit" value="512M"/>` is in `phpunit.xml.dist`.
+- **F12 superseded:** the parallel-only `--passthru-php` flag from F12 is removed from `composer test:unit`.
+- **Verified:** Pest 2–5 parallel workers report 512M. Pest 1 has no parallel mode.
+- **Not a leak:** the arch presets take about 55 MB and the peak is about 145 MB. 128M was simply too tight.
+
+### F16 — Arch test needs `intl` · APPLIED `5ca7809`, `bce95e4`
+**Evidence.** On images without `intl`, the arch preset fails with `Spoofchecker not found`.
+
+**Proposed fix.**
+- Make sure every CI lane's extension list includes `intl`, `pdo_pgsql` and `pgsql`.
+- Document `intl` as a dev requirement in TESTING.md.
+- Don't change the test.
+
+**Reasoning.** This is an environment requirement, not a code bug. Weakening the arch test to avoid it would lose real coverage.
+
+**Applied.**
+- The Linux lanes already had `intl`, `pdo_pgsql` and `pgsql`.
+- The Windows lane gains `pdo_pgsql` and `pgsql`, plus `audit.block-insecure false`, matching the other lanes.
+- `actionlint` is clean.
+- Ubuntu 24.04's PGDG repository provides client 12 and 18, matching the service containers.
+- **Docs part:** TESTING.md notes that `intl` is a dev requirement (`bce95e4`, batch 3).
+
+### F17 — Backup preflight test breaks on Postgres 12 · APPLIED (part of `d80b6be`)
+See F6. Listed separately because it would have turned CI's Laravel 9 lanes red.
+
+### F26 — Password-timeout test flaked under load · APPLIED `4183940`
+**Evidence.** Under heavy load, a second ticked over during `travel()`, so a boundary test in `PasswordConfirmationTest` saw an expired confirmation.
+
+**Applied.** The boundary tests freeze time.
+
+**Reasoning.** A time-boundary test has to control the clock, or it tests the machine's speed instead of the rule.
+
+### Batch 2 verification (branch `fix-b2-ci-green`, 2026-10-11; fast-forwarded into `main` at `4183940`)
+Results are passed / skipped / failed.
+
+| Lane | Postgres | Result |
+|---|---|---|
+| L9 / PHP 8.0 (lowest) | 12 | 1386 / 0 / 0 |
+| L9 / PHP 8.2 | 12 | 1386 / 0 / 0 |
+| L10 / PHP 8.1 (lowest), L10 / PHP 8.3 | 18 | 1386 / 0 / 0 each |
+| L11 / 8.2 (lowest), L11 / 8.4, L12 / 8.3 (lowest), L12 / 8.5, L13 / 8.4 (lowest), tooling lane in Docker | 18 | 1390 / 0 / 0 each, with PHPStan, Pint and 100% type coverage |
+| `composer test`, local PHP 8.4 | 18 | 1390 passed |
+| pgsql group, local PHP 8.4 | 12 | 494 passed |
+
+Laravel 9 and 10 run 4 fewer tests because the arch tests need Pest 3+.
+
+**Known, not fixed:**
+- **Flaky timing tests:** two "1 MB in under 1 s" performance tests in the SQL lexer/splitter suites failed once at a machine load of 12. They're candidates for a looser bound, or for only measuring when the machine is idle.
+- **Pest 2.0.1 exit code:** `--parallel` exits 1 even when every test passes. CI doesn't use `--parallel` on that lane, so it only affects local runs pinned to Pest 2.0.1.
+
+---
+
+## 3. Tests and docs (Batch 3)
+
+### F18 — S15 has no cell-value XSS test · APPLIED `92e2131`
+**Evidence.** TESTING.md §5 specifies a test with a cell value like `<img src=x onerror=…>`. It didn't exist; only CSP and user-name injection were tested.
+
+**Work so far (uncommitted):**
+- `tests/Pgsql/CellXssTest.php` puts payloads in text, jsonb and array columns. It asserts that the rows API and the query API return them byte-for-byte as JSON strings, and that the shell page never embeds row data.
+- `ShellTest` gains an assertion that ESLint's `vue/no-v-html` is set to `error`.
+
+**Remaining.** Run it in the pgsql and Laravel 9 lanes, then commit.
+
+**Reasoning.**
+- **Server side, the right property is preservation.** Values must survive exactly as JSON strings, not be "sanitised": stripping or escaping on the server would corrupt data and give false comfort.
+- **Rendering safety belongs to the SPA.** Text interpolation does that job, and the lint rule enforces it. The test pins down both halves.
+- **The browser test already confirmed it in practice.** The payload rendered as text.
+
+**Applied.**
+- `tests/Pgsql/CellXssTest.php` checks text, jsonb and array cells through the rows API and the query API.
+- `ShellTest` asserts `vue/no-v-html: error`, and that `resources/js` contains no HTML sink (`v-html`, `innerHTML`).
+
+### F19 — The backup test never restores the dump · APPLIED `bf7f580`
+**Evidence.** The backup test only lists the dump's contents with `pg_restore --list`. The M4 exit criterion is a backup that round-trips through a restore.
+
+**Work so far (uncommitted):**
+- `BackupTest` gains a round-trip test: dump a scratch schema through the backup job, `pg_restore` it into a fresh database, and compare row counts.
+- `tests/Pgsql/scripts/docker-pgrestore.sh` runs `pg_restore` inside the `dbx-pg` container. That lets the test run locally, where Postgres.app's tools are version 17 and the server is 18.
+
+**Remaining.**
+- The test must **skip cleanly**, with a reason, when the client tools' major version is older than the server's.
+- CI installs a matching `postgresql-client`, so it runs there.
+
+**Reasoning.**
+- **A backup you can't restore isn't a backup.** Listing the contents proves the file is an archive, not that it restores.
+- **The Docker wrapper is a test-only convenience.** It isn't shipped, since `tests/` is export-ignored. It mirrors an existing `docker-pgdump.sh` pattern, so local runs match CI.
+
+**Applied.**
+- **The round trip:** backup job → `pg_restore` into a fresh database → compare row counts, contents, the view and the sequences.
+- **Where it runs:**
+  - Locally on Postgres 18, using the container's tools.
+  - In the L9 lane on Postgres 12, with client 13.
+- **When it skips:** if the client is older than the server (client 13 against Postgres 18), it skips with the preflight's reason.
+
+### F20 — `ScheduleFailed` had no no-leak test, and failed schedules weren't re-run · APPLIED `523d722`
+**Evidence.**
+- `ScheduleFailed` had no assertion that its payload is clean or that it fires after the audit row.
+- Nothing checked that a schedule runs again on its next tick after a failure, and the job didn't release its lock on failure.
+
+**Fix.**
+- Payload and ordering tests.
+- The job releases its lock, and a test shows a failed schedule runs on the next tick.
+
+**Reasoning.**
+- Every event promises the PRD's no-leak payload and must fire after its audit row. This was the only event not tested for that.
+- A lock that isn't released turns one failure into a permanently dead schedule.
+
+### F21 — Docs don't match the code · APPLIED `a1f63ea`
+**Evidence (from the verifier):**
+- **README:**
+  - The "Pre-release … planned" banner contradicts the Roadmap's "Built".
+  - Stale *(planned)* markers on the queue worker, `limits.background.timeout`, `hidden`, `masking`, `queue.*`, `storage.disk` and `storage.file_ttl_hours`.
+  - `dbx:schedule:tick` is missing from the commands table.
+  - `dbx:prune` is described as pruning audit rows only.
+  - `limits.import.*` is undocumented.
+- **docs/security.md:**
+  - "Masking misses aliases *(planned, M1)*".
+  - Active sessions are marked "planned".
+- **Plan and TESTING.md:**
+  - They reference `Feature/RunJobTest`; the actual file is `RunsTest`.
+  - The plan lists `/api/runs…` and `/api/audit`; the actual routes are under `api/{label}/`.
+  - The plan says another user's download gets 403; the code returns 404.
+- **PRD and CHANGELOG** say PHP 8.0–8.4, but CI tests 8.5.
+- **The batch 1 changes are undocumented:**
+  - the schedule snapshot semantics
+  - the audit label scope
+  - `POST backups` returning 422
+  - the `PGSSL*` environment variables
+  - the import error fields
+  - background queries using `limits.background.timeout`
+  - users without a stored password being unable to confirm
+
+**Proposed fix.**
+1. **Generate the README tables from the code:** the config table from `config/dbexplorer.php`, and the commands table from `testbench list dbx`.
+2. **Correct the other mismatches.**
+3. **Put the batch 1 changes in CHANGELOG:**
+   - 1.0.0 isn't tagged, so they go under `Unreleased`.
+   - Nothing should be tagged until verification passes again.
+4. **Update PRD §7.9 with the schedule semantics.**
+5. **Mark the M3/M4 UI as "API available; UI coming"** until batch 4 lands. See F24.
+
+**Reasoning.**
+- **This is a security package, so the docs are part of the security model.** Hosts configure grants and hidden/masking rules based on what the docs say.
+- **Claiming features are built when they're API-only misleads users.**
+- **Generated tables can't drift.**
+
+**Applied.**
+- **README:**
+  - The status banner is fixed.
+  - A roadmap separates what has UI from what is API-only.
+  - The config and commands tables match the code, enforced by the new `Feature/DocsTest`, which fails when they drift.
+  - There are no stale *(planned)* markers.
+- **CHANGELOG:** all changes are under `Unreleased`, and the PHP range is 8.0–8.5.
+- **PRD:** §7.9–7.12 describe what was built, including the schedule snapshot semantics.
+- **Plan and TESTING.md:**
+  - Routes are under `api/{label}`.
+  - Another user's download returns 404.
+  - `RunsTest` is the correct file name.
+  - The S# test map is updated.
+- **security.md and the role recipe:**
+  - Session cancel and terminate only signal the same login, so the recipe no longer suggests `pg_signal_backend`. It does suggest an optional `pg_read_all_stats`, so the sessions list can show other logins.
+  - The `PGSSL*` variables and the backup 422 are documented.
+- **Code comments:** PRD section numbers are corrected. These are comment-only changes.
+
+**Unreconciled:**
+- `DdlForm` has no constraint forms, so constraints are documented as API-only.
+- The untagged `v0.1.0` CHANGELOG stub was left as it is.
+
+### F22 — `dbx:prune` is scheduled twice · APPLIED `19c8e48`
+**Evidence.** The service provider already schedules `dbx:prune` daily, and the README and `dbx:install` output also tell the host app to schedule it. Following the docs runs it twice a day.
+
+**Proposed fix.**
+- Remove the instruction from the README and from `InstallCommand`'s output, and update the test.
+- The host only needs the standard `schedule:run` cron and a queue worker.
+- Verify that the provider registers both `dbx:prune` and `dbx:schedule:tick`.
+
+**Reasoning.** It's harmless today, since pruning is idempotent. But double runs can overlap on large audit tables. And the less the host has to wire up, the fewer ways to misconfigure it.
+
+**Applied.**
+- **`dbx:install` and the README** now say the provider schedules `dbx:prune` (daily) and `dbx:schedule:tick` (every minute). The host only needs the `schedule:run` cron and a queue worker. The daily `dbx:audit:verify` stays the host's choice.
+- **Tests:** `ServiceProviderTest` pins down both scheduler entries, and `InstallCommandTest` checks the new output.
+
+### F23 — The S11 wording in TESTING.md overstates the guarantee · APPLIED `315d963`
+**Evidence.**
+- As an editor, `SELECT fixture.sneaky()` is classified as a read and performs its write without any confirmation prompt.
+- That's correct, because editors have write grants, and docs/security.md says the classifier is UX only.
+- But TESTING.md's S11 wording implies the database rejects this case.
+
+**Proposed fix.** Reword TESTING.md S11:
+- The database rejects what the role's grants forbid: viewer writes, and editor DDL.
+- The classifier only drives confirmation prompts, so a function with side effects called by a role allowed to write will run without a prompt.
+- Point to the security.md section.
+
+**Reasoning.** The behaviour is the intended design. Only the wording promises more than the system does, and overstated guarantees in a security doc are a defect in their own right.
+
+**Applied.** S11 is reworded consistently in TESTING.md, the plan, and security.md §4.
+
+### Batch 3 verification (fast-forwarded into `main` at `a1f63ea`, 2026-10-11)
+| Run | Result |
+|---|---|
+| `composer test` on `main` (PHPStan, Pint, 100% type coverage, Pest) | 901 passed, 498 pgsql tests skipped (no database env) |
+| pgsql group on `main`, Postgres 18 | 498 / 498 passed |
+| L9 / PHP 8.0 (lowest), Postgres 12, on the branch | 1393 passed. The 2 dump tests skip because that image has no `pg_dump`. |
+
+The full Laravel 9–13 matrix last ran at `4183940`, and batch 3 adds only tests, docs and comments. It runs again in the final verification (§7, step 4).
+
+---
+
+## 4. UI (Batch 4)
+
+### F24 — HIGH (scope) — Most M3/M4 features have no screens · NOT STARTED
+**Evidence.**
+- The SPA has no screens for:
+  - export
+  - run in background
+  - CSV import
+  - scripts
+  - saved queries
+  - schedules, including the new approve/resync flow with `allow_writes`/`allow_ddl`
+  - backups
+  - active sessions
+  - the audit viewer
+  - the create-table and create-view forms
+  - the add/drop constraint forms, which batch 3 found `DdlForm` doesn't have
+- All of these work through the JSON API, which the browser test exercised from inside the logged-in page.
+- The README and CHANGELOG say they're "Built", and the TESTING.md §2.5 M3/M4 browser checklist can't be followed in the UI.
+
+**Proposed fix.**
+- **Screens:** build them on the existing components (`DataGrid`, `ModalDialog`, `PasswordConfirmModal`, the Runs page). They also need to show F7's import errors and the script per-statement results on the Runs page.
+- **Ordering:** your uncommitted UI motion polish gets reviewed (lint, typecheck, a byte-identical `dist/`) and committed first, so batch 4 builds on top of it. You chose this option, but it's held while the doc-first instruction stands.
+
+**Reasoning.**
+- **Most of the product's value is unreachable without screens.** A phpMyAdmin replacement isn't one if exports, imports, backups and sessions need curl.
+- **Building after batches 1–3 means the screens target the corrected API.** That's the fixed schedule flow and the import error fields.
+
+### F25 — LOW — Smaller UI and API issues · NOT STARTED
+| # | Issue | Proposed fix | Reasoning |
+|---|---|---|---|
+| a | The DDL form's "Queued as run #N" notice never appears, because the dialog closes first | Show it as a toast or banner that outlives the dialog, linking to the run | The user otherwise doesn't know a background job started (`CONCURRENTLY`) |
+| b | After dropping a table, the page stays on the 404 and the tree still lists the table | After a successful DDL execute, invalidate the tree cache and navigate to the schema | Stale navigation makes a successful drop look failed |
+| c | After a save conflict, the only option is "reload" | Add "overwrite with mine", which re-issues the update using the current row as the new `original` | Clobbering is legitimate when it's a deliberate choice. The 409 stays the default safety net. |
+| d | `POST rows` with no values inserts a row of defaults (201) | Require at least one value or an explicit `defaults: true` (422 otherwise) | Inserting an all-defaults row by accident, for example from an empty form, is a surprising write |
+| e | The editor shows "5 rows" for a `DELETE` with no result set | Show "N rows affected" for statements with no result set | Mixing up rows *returned* and rows *affected* is misleading after destructive SQL |
+
+---
+
+## 5. Environment notes (no code fix)
+
+| Note | Action |
+|---|---|
+| The Chrome extension wasn't connected during the browser test, so headless Chrome was used instead | None. The GIFs and screenshots are in `/tmp/wt-e2e-tools/`. |
+| Local `pg_dump` is 17 (Postgres.app) and the server is 18, so a successful backup couldn't be tested end to end | Covered by F19's container wrapper. Alternatively, upgrade Postgres.app. |
+| The workbench doesn't hide `fixture.secrets` the way the test config does | Optional: mirror the test's `hidden` and `masking` config in `WorkbenchServiceProvider`, so manual testing matches |
+| The workbench's `failed_jobs` table lives on SQLite | Optional: put it on the Postgres workbench database |
+| Docker images `dbx-verify-php80`…`85` are kept for re-running lanes | Remove them when they're no longer needed |
+
+## 6. Accepted known gaps (documented, not fixes)
+
+The verifier confirmed these are pinned by `GAP:` tests and documented in docs/security.md:
+- **S13:** a function that reads a hidden table isn't caught.
+- **S13:** statements that EXPLAIN rejects, such as `CREATE VIEW`, aren't checked for hidden tables.
+- **S13:** view definitions name the hidden tables they read.
+- **S14:** an aliased masked column isn't masked. The PHP Postgres driver doesn't expose the source column, so column-level `REVOKE` is the real control.
+- **S22:** deleting the newest audit rows goes undetected if `dbx_audit_head` is rewritten too. Forwarding to a log channel (S19) closes that.
+
+## 7. Next steps (awaiting your go-ahead)
+1. ~~Batch 2 (F13–F16, F26)~~: merged into `main` at `4183940`. Next: finish F18 and F19 from `wt-b3`.
+2. ~~F18, F19, F21–F23 (batch 3)~~: merged into `main` at `a1f63ea`.
+3. Commit your UI work, then do F24 and F25 (screens).
+4. Run the full verification again (the same three checks) before any tag.

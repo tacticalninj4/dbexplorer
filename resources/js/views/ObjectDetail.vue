@@ -239,7 +239,7 @@ watch(activeTab, () => void loadTab());
                     :aria-selected="tab === activeTab"
                     :aria-controls="`dbx-panel-${tab}`"
                     :tabindex="tab === activeTab ? 0 : -1"
-                    class="-mb-px border-b-2 px-3 py-2 text-sm whitespace-nowrap focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:outline-none"
+                    class="-mb-px border-b-2 px-3 py-2 text-sm whitespace-nowrap transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:outline-none"
                     :class="tab === activeTab ? 'border-sky-600 font-medium text-sky-700 dark:text-sky-400' : 'border-transparent text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'"
                     @click="selectTab(tab)"
                 >

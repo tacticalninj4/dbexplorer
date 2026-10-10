@@ -396,7 +396,7 @@ const modKey = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl';
                 <div
                     v-for="tab in tabs"
                     :key="tab.id"
-                    class="group flex items-center rounded-t-md border border-b-0 text-sm"
+                    class="group flex items-center rounded-t-md border border-b-0 text-sm transition-colors duration-150"
                     :class="tab.id === activeId ? 'border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900' : 'border-transparent text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'"
                 >
                     <button
@@ -408,7 +408,7 @@ const modKey = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl';
                         class="rounded-tl-md px-3 py-1.5 whitespace-nowrap focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:outline-none"
                         @click="switchTo(tab.id)"
                     >
-                        {{ tab.title }}<span v-if="runs.get(tab.id)?.status === 'running'" class="ml-1 text-sky-600" aria-label="running">●</span>
+                        {{ tab.title }}<span v-if="runs.get(tab.id)?.status === 'running'" class="ml-1 text-sky-600 motion-safe:animate-pulse" aria-label="running">●</span>
                     </button>
                     <button
                         type="button"
@@ -425,7 +425,7 @@ const modKey = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl';
 
         <div class="flex flex-wrap items-center gap-2 border-b border-zinc-200 bg-white px-3 py-2 text-sm dark:border-zinc-800 dark:bg-zinc-900">
             <button type="button" class="dbx-btn dbx-btn-primary" :disabled="running" :title="`${modKey}+Enter`" @click="start(null)">
-                {{ running ? 'Running…' : 'Run' }}<kbd class="ml-2 text-xs opacity-75">{{ modKey }}↵</kbd>
+                <span v-if="running" class="dbx-spinner mr-1.5 border-white/50 border-t-white" aria-hidden="true" />{{ running ? 'Running…' : 'Run' }}<kbd class="ml-2 text-xs opacity-75">{{ modKey }}↵</kbd>
             </button>
             <button type="button" class="dbx-btn" :disabled="running" :title="`EXPLAIN: plans without running (${modKey}+Shift+Enter)`" @click="start('plain')">Explain</button>
             <button type="button" class="dbx-btn" :disabled="running" title="EXPLAIN ANALYZE: runs the statement, then rolls it back" @click="start('analyze')">Explain analyze</button>
@@ -442,7 +442,7 @@ const modKey = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl';
 
             <section class="flex min-h-0 flex-1 flex-col" aria-label="Result" aria-live="polite">
                 <p v-if="!run" class="p-4 text-sm text-zinc-500">Run a statement to see its result here.</p>
-                <p v-else-if="run.status === 'running'" class="p-4 text-sm text-zinc-500">Running…</p>
+                <p v-else-if="run.status === 'running'" class="flex items-center gap-2 p-4 text-sm text-zinc-500"><span class="dbx-spinner" aria-hidden="true" />Running…</p>
                 <p v-else-if="run.status === 'confirm'" class="p-4 text-sm text-zinc-500">Waiting for your confirmation…</p>
 
                 <div v-else-if="run.status === 'failed' && run.error" role="alert" class="m-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-100">
@@ -468,9 +468,9 @@ const modKey = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl';
                         <span class="text-zinc-500 tabular-nums">{{ formatDuration(run.result.duration_ms) }}</span>
                         <span v-if="run.result.truncated" class="text-amber-700 dark:text-amber-400">Showing the first {{ formatNumber(run.result.row_count) }} rows: your row limit cut the rest.</span>
                         <div role="tablist" aria-label="Result views" class="ml-auto flex gap-1">
-                            <button v-if="run.result.plan" type="button" role="tab" :aria-selected="resultTab === 'plan'" class="rounded px-2 py-0.5" :class="resultTab === 'plan' ? 'bg-zinc-200 dark:bg-zinc-700' : ''" @click="resultTab = 'plan'">Plan</button>
-                            <button v-else type="button" role="tab" :aria-selected="resultTab === 'results'" class="rounded px-2 py-0.5" :class="resultTab === 'results' ? 'bg-zinc-200 dark:bg-zinc-700' : ''" @click="resultTab = 'results'">Results</button>
-                            <button type="button" role="tab" :aria-selected="resultTab === 'messages'" class="rounded px-2 py-0.5" :class="resultTab === 'messages' ? 'bg-zinc-200 dark:bg-zinc-700' : ''" @click="resultTab = 'messages'">
+                            <button v-if="run.result.plan" type="button" role="tab" :aria-selected="resultTab === 'plan'" class="rounded px-2 py-0.5 transition-colors duration-150" :class="resultTab === 'plan' ? 'bg-zinc-200 dark:bg-zinc-700' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'" @click="resultTab = 'plan'">Plan</button>
+                            <button v-else type="button" role="tab" :aria-selected="resultTab === 'results'" class="rounded px-2 py-0.5 transition-colors duration-150" :class="resultTab === 'results' ? 'bg-zinc-200 dark:bg-zinc-700' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'" @click="resultTab = 'results'">Results</button>
+                            <button type="button" role="tab" :aria-selected="resultTab === 'messages'" class="rounded px-2 py-0.5 transition-colors duration-150" :class="resultTab === 'messages' ? 'bg-zinc-200 dark:bg-zinc-700' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'" @click="resultTab = 'messages'">
                                 Messages<span v-if="run.result.notices.length" class="ml-1 rounded-full bg-sky-600 px-1.5 text-xs text-white">{{ run.result.notices.length }}</span>
                             </button>
                         </div>
