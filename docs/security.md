@@ -192,7 +192,7 @@ These are known limits. Where a test exists, it is named `GAP: ...` so the behav
 Each `dbx_audit_log` row stores `hash = HMAC-SHA256(key, prev_hash . canonical_json(row))`. The key is `dbexplorer.audit.key` (`DBEXPLORER_AUDIT_KEY`), falling back to `APP_KEY`. Without the key, someone with only database access can't rebuild a valid chain after editing rows.
 
 - **Verify on a schedule.** `php artisan dbx:audit:verify` recomputes the chain and exits non-zero at the first edited, deleted or reordered row. Run it daily and alert on failure.
-- **Prune on a schedule.** `php artisan dbx:prune` deletes rows older than `audit.retention_days` (90 by default). It first writes a `pruned` checkpoint, so verification still passes afterwards.
+- **Pruning is scheduled for you.** The package schedules `dbx:prune` daily on the host's scheduler (don't add it again). It deletes audit rows older than `audit.retention_days` (90 by default), after writing a `pruned` checkpoint so verification still passes, along with finished runs, query history and expired result files.
 - **Forward entries.** Set `audit.log_channel` to a channel that leaves the box (syslog, a SIEM) to cover tail truncation.
 - **The viewer is per label.** `GET api/{label}/audit` needs the admin role on `{label}`, and shows only rows from labels where the user is admin. Rows without a label (password confirmations) show only to a user who is admin on every configured label. A `label` filter outside that set gives an empty page.
 - **Set a dedicated key.** Rotating `APP_KEY` would otherwise break verification of every existing row.

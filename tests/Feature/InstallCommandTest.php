@@ -74,8 +74,20 @@ it('prints the gate and role resolver stubs', function () {
         ->toContain('DbExplorer::roleUsing(function ($user, string $label) {')
         ->toContain('DBEXPLORER_ENABLED=true')
         ->toContain('DBEXPLORER_STORAGE_CONNECTION')
-        ->toContain('php artisan migrate')
-        ->toContain('dbx:audit:verify');
+        ->toContain('php artisan migrate');
+});
+
+it('asks the host for the scheduler cron, an audit check and a queue worker, but not for dbx:prune', function () {
+    $output = runDbxInstall();
+
+    // The provider schedules dbx:prune and dbx:schedule:tick itself; a host
+    // entry for either would run it twice.
+    expect($output)
+        ->toContain('php artisan schedule:run')
+        ->toContain("Schedule::command('dbx:audit:verify')->daily();")
+        ->toContain('php artisan queue:work')
+        ->not->toContain("command('dbx:prune')")
+        ->not->toContain("command('dbx:schedule:tick')");
 });
 
 it('prints the PostgreSQL role recipe documented in docs/security.md', function () {

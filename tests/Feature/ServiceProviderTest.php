@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\ServiceProvider;
 use TacticalNinj4\DbExplorer\DbExplorer;
 use TacticalNinj4\DbExplorer\DbExplorerServiceProvider;
@@ -35,3 +36,21 @@ it('registers the publish tags', function (string $tag) {
     'dbexplorer-lang',
     'dbexplorer-migrations',
 ]);
+
+it('schedules dbx:prune daily and dbx:schedule:tick every minute, once each', function () {
+    $expressions = [];
+
+    foreach (app(Schedule::class)->events() as $event) {
+        foreach (['dbx:prune', 'dbx:schedule:tick', 'dbx:audit:verify'] as $command) {
+            if (str_contains((string) $event->command, $command)) {
+                $expressions[$command][] = $event->expression;
+            }
+        }
+    }
+
+    // dbx:audit:verify is the host's to schedule, with its own alerting.
+    expect($expressions)->toBe([
+        'dbx:prune' => ['0 0 * * *'],
+        'dbx:schedule:tick' => ['* * * * *'],
+    ]);
+});

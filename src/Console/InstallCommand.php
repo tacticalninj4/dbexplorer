@@ -57,10 +57,13 @@ class InstallCommand extends Command
         $this->step('5. Create the dbx_* tables', 'php artisan migrate');
 
         $this->step('6. Keep the scheduler and a queue worker running', <<<'TEXT'
-            Schedule both daily, in routes/console.php (Laravel 11+) or app/Console/Kernel.php:
-                Schedule::command('dbx:prune')->daily();         // $schedule->command(...) in Kernel.php
-                Schedule::command('dbx:audit:verify')->daily();  // alert when it fails
-            Background features (exports, imports, scripts, backups) will need: php artisan queue:work
+            DbExplorer schedules its own dbx:prune (daily) and dbx:schedule:tick (every minute).
+            The host only needs Laravel's scheduler cron:
+                * * * * * cd /path-to-your-app && php artisan schedule:run >> /dev/null 2>&1
+            Verify the audit chain daily and alert when it fails, in routes/console.php (Laravel 11+):
+                Schedule::command('dbx:audit:verify')->daily();  // $schedule->command(...) in Kernel.php
+            Background queries, exports, imports, scripts, backups and scheduled queries need a worker:
+                php artisan queue:work
             TEXT);
 
         return self::SUCCESS;

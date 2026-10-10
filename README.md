@@ -45,7 +45,7 @@ composer require tacticalninj4/dbexplorer
 php artisan dbx:install
 ```
 
-`dbx:install` publishes `config/dbexplorer.php` (it won't overwrite an existing one unless you pass `--force`) and prints every remaining step: the `.env` values with a freshly generated audit key, the gate and role stubs, the PostgreSQL role SQL, and the scheduler entries. It never edits your `.env` or code.
+`dbx:install` publishes `config/dbexplorer.php` (it won't overwrite an existing one unless you pass `--force`) and prints every remaining step: the `.env` values with a freshly generated audit key, the gate and role stubs, the PostgreSQL role SQL, and the scheduler and queue requirements. It never edits your `.env` or code.
 
 ### 1. Enable it
 
@@ -120,23 +120,29 @@ Each label maps every role to its own Laravel connection, so a viewer's queries 
 ],
 ```
 
-### 6. Schedule the maintenance commands
+### 6. Run the scheduler and a queue worker
 
-Laravel 11+, in `routes/console.php`:
+DbExplorer registers its own scheduled commands: `dbx:prune` daily and `dbx:schedule:tick` every minute. Don't add them yourself, or they run twice. The host only needs Laravel's usual scheduler cron:
+
+```
+* * * * * cd /path-to-your-app && php artisan schedule:run >> /dev/null 2>&1
+```
+
+Verify the audit chain daily and alert when it fails. Laravel 11+, in `routes/console.php`:
 
 ```php
 use Illuminate\Support\Facades\Schedule;
 
-Schedule::command('dbx:prune')->daily();
 Schedule::command('dbx:audit:verify')->daily();
 ```
 
 Laravel 9 and 10, in `app/Console/Kernel.php`:
 
 ```php
-$schedule->command('dbx:prune')->daily();
 $schedule->command('dbx:audit:verify')->daily();
 ```
+
+Background queries, exports, imports, scripts, backups and scheduled queries run on the queue (`dbexplorer.queue`), so keep a worker running: `php artisan queue:work`.
 
 Then open `/dbexplorer` in your app.
 
