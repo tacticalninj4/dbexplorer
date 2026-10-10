@@ -226,6 +226,8 @@ These are manual, because timing assertions in shared CI runners are flaky. Each
 
 ## 8. Commands
 
+Dev requirements: PHP with the `intl` extension (the arch presets in `ArchTest.php` use `Spoofchecker`, and fail without it), plus `pdo_pgsql` and `pgsql` for the pgsql group. Every CI lane installs all three.
+
 ```bash
 composer test                                  # tooling lane: phpstan + pint + type coverage + pest
 composer test:unit                             # pest, parallel
