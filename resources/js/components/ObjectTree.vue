@@ -5,6 +5,8 @@ import type { RouteLocationRaw } from 'vue-router';
 import { api, describeError, segment } from '../api';
 import * as catalog from '../composables/catalog';
 import type { DbObject, Extension, ObjectType, Schema } from '../types';
+import BaseIcon from './BaseIcon.vue';
+import type { IconName } from './BaseIcon.vue';
 
 /**
  * Schemas, then object groups by type, loaded per schema on first expand.
@@ -38,6 +40,7 @@ interface Node {
     text: string;
     hint?: string;
     kind: 'schema' | 'group' | 'object' | 'extension' | 'message';
+    icon?: IconName;
     expandable: boolean;
     expanded: boolean;
     selected: boolean;
@@ -78,6 +81,24 @@ function isCurrent(object: DbObject): boolean {
         && (route.query.fn === '1') === (object.signature !== null);
 }
 
+const TYPE_ICONS: Record<ObjectType, IconName> = {
+    table: 'table',
+    partitioned_table: 'partition',
+    foreign_table: 'table',
+    view: 'view',
+    materialized_view: 'matview',
+    sequence: 'sequence',
+    function: 'function',
+    procedure: 'function',
+    enum: 'type',
+    domain: 'type',
+    composite_type: 'type',
+};
+
+function typeIcon(object: DbObject): IconName {
+    return object.parent ? 'partition' : (TYPE_ICONS[object.type] ?? 'table');
+}
+
 function typeHint(object: DbObject): string | undefined {
     if (object.parent) {
         return 'partition';
@@ -92,7 +113,7 @@ const nodes = computed<Node[]>(() => {
     for (const schema of schemas.value) {
         const schemaKey = `s:${schema.name}`;
         const open = expanded.value.has(schemaKey);
-        list.push({ key: schemaKey, level: 1, text: schema.name, kind: 'schema', expandable: true, expanded: open, selected: false, toggle: schemaKey });
+        list.push({ key: schemaKey, level: 1, text: schema.name, kind: 'schema', icon: 'schema', expandable: true, expanded: open, selected: false, toggle: schemaKey });
 
         if (!open) {
             continue;
@@ -121,6 +142,7 @@ const nodes = computed<Node[]>(() => {
                     text: object.signature ?? object.name,
                     hint: typeHint(object),
                     kind: 'object' as const,
+                    icon: typeIcon(object),
                     expandable: false,
                     expanded: false,
                     selected: isCurrent(object),
@@ -139,6 +161,7 @@ const nodes = computed<Node[]>(() => {
                     text: extension.name,
                     hint: extension.version,
                     kind: 'extension' as const,
+                    icon: 'extension' as const,
                     expandable: false,
                     expanded: false,
                     selected: false,
@@ -354,50 +377,66 @@ function revealCurrent(): void {
 watch(() => props.label, load, { immediate: true });
 watch(() => route.fullPath, revealCurrent);
 
+// A schema change elsewhere (DDL form) dropped cached objects: reload what's open.
+watch(catalog.catalogVersion, () => {
+    for (const schema of Object.keys(objects.value)) {
+        delete objects.value[schema];
+        void loadSchema(schema);
+    }
+});
+
 onBeforeUnmount(() => clearTimeout(searchTimer));
 
-const levelPadding = ['pl-2', 'pl-2', 'pl-5', 'pl-9'];
+const levelPadding = ['pl-1.5', 'pl-1.5', 'pl-4', 'pl-[1.875rem]'];
 </script>
 
 <template>
     <nav class="flex min-h-0 flex-1 flex-col" aria-label="Database objects">
-        <div class="border-b border-zinc-200 p-2 dark:border-zinc-800">
+        <div class="px-2 pt-2.5 pb-2">
             <label for="dbx-object-search" class="sr-only">Search objects</label>
-            <input
-                id="dbx-object-search"
-                v-model="query"
-                type="search"
-                placeholder="Search objects…"
-                autocomplete="off"
-                maxlength="100"
-                class="dbx-input w-full"
-                @input="onSearch"
-                @keydown.esc="query = ''; onSearch()"
-            >
+            <div class="relative">
+                <BaseIcon name="search" :size="14" class="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-fg-subtle" />
+                <input
+                    id="dbx-object-search"
+                    v-model="query"
+                    type="search"
+                    placeholder="Search objects"
+                    autocomplete="off"
+                    maxlength="100"
+                    class="dbx-input w-full pl-7"
+                    @input="onSearch"
+                    @keydown.esc="query = ''; onSearch()"
+                >
+                <span v-if="searching" class="dbx-spinner absolute top-1/2 right-2 -translate-y-1/2" aria-hidden="true" />
+            </div>
         </div>
 
-        <div class="min-h-0 flex-1 overflow-auto py-1 text-sm">
+        <div class="min-h-0 flex-1 overflow-auto pb-2 text-sm">
             <template v-if="query.trim() !== ''">
-                <p v-if="searching && results === null" class="px-3 py-2 text-zinc-500">Searching…</p>
-                <p v-else-if="searchError" role="alert" class="px-3 py-2 text-red-700 dark:text-red-300">{{ searchError }}</p>
-                <p v-else-if="results && results.length === 0" class="px-3 py-2 text-zinc-500">No objects match.</p>
-                <ul v-else-if="results" aria-label="Search results">
+                <p v-if="searching && results === null" class="px-3 py-2 text-fg-muted" role="status">Searching…</p>
+                <p v-else-if="searchError" role="alert" class="mx-2 dbx-callout dbx-callout-danger"><BaseIcon name="alert-circle" />{{ searchError }}</p>
+                <p v-else-if="results && results.length === 0" class="px-3 py-2 text-fg-muted">No objects match “{{ query.trim() }}”.</p>
+                <ul v-else-if="results" aria-label="Search results" class="px-1.5">
                     <li v-for="object in results" :key="`${object.schema}.${object.type}.${object.signature ?? object.name}`">
                         <router-link
                             :to="objectRoute(object)"
-                            class="flex items-baseline gap-2 px-3 py-1 transition-colors duration-100 hover:bg-zinc-100 focus-visible:bg-sky-100 focus-visible:text-sky-900 focus-visible:outline-none dark:hover:bg-zinc-800 dark:focus-visible:bg-sky-950 dark:focus-visible:text-sky-100"
+                            class="flex h-[26px] items-center gap-2 rounded px-1.5 transition-colors duration-100 outline-offset-[-2px] hover:bg-hover"
+                            :class="isCurrent(object) ? 'bg-accent-soft text-accent-soft-fg' : ''"
                         >
+                            <BaseIcon :name="typeIcon(object)" :size="14" class="text-fg-subtle" />
                             <span class="truncate">{{ object.signature ?? object.name }}</span>
-                            <span class="ml-auto shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{{ object.schema }} · {{ object.type.replace('_', ' ') }}</span>
+                            <span class="ml-auto shrink-0 truncate text-xs text-fg-subtle">{{ object.schema }}</span>
                         </router-link>
                     </li>
                 </ul>
             </template>
 
             <template v-else>
-                <p v-if="error" role="alert" class="px-3 py-2 text-red-700 dark:text-red-300">{{ error }}</p>
-                <p v-else-if="schemas.length === 0" class="px-3 py-2 text-zinc-500">Loading…</p>
-                <ul v-else ref="treeEl" role="tree" aria-label="Schemas">
+                <p v-if="error" role="alert" class="mx-2 dbx-callout dbx-callout-danger"><BaseIcon name="alert-circle" />{{ error }}</p>
+                <div v-else-if="schemas.length === 0" class="space-y-2.5 px-3 py-2" role="status" aria-label="Loading schemas">
+                    <span class="dbx-skeleton w-24" /><span class="dbx-skeleton w-32" /><span class="dbx-skeleton w-20" />
+                </div>
+                <ul v-else ref="treeEl" role="tree" aria-label="Schemas" class="px-1.5">
                     <li
                         v-for="node in nodes"
                         :key="node.key"
@@ -407,20 +446,33 @@ const levelPadding = ['pl-2', 'pl-2', 'pl-5', 'pl-9'];
                         :aria-expanded="node.expandable ? node.expanded : undefined"
                         :aria-selected="node.kind === 'object' ? node.selected : undefined"
                         :tabindex="node.kind === 'message' ? undefined : node.key === tabStop ? 0 : -1"
-                        class="flex cursor-default items-center gap-1.5 py-1 pr-2 transition-colors duration-100 outline-none select-none"
+                        class="flex h-[26px] cursor-default items-center gap-1.5 rounded pr-1.5 outline-offset-[-2px] select-none"
                         :class="[
                             levelPadding[node.level],
-                            node.kind === 'message' ? 'text-zinc-500 italic dark:text-zinc-400' : 'hover:bg-zinc-100 focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-inset dark:hover:bg-zinc-800',
-                            node.selected ? 'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-100' : '',
-                            node.kind === 'object' ? 'cursor-pointer' : '',
+                            node.kind === 'message' ? 'text-fg-subtle italic' : 'transition-colors duration-100 hover:bg-hover',
+                            node.selected ? 'bg-accent-soft! text-accent-soft-fg' : '',
                         ]"
                         @click="node.kind !== 'message' && activate(node)"
                         @focus="node.kind !== 'message' && (focusedKey = node.key)"
                         @keydown="onKeydown($event, node)"
                     >
-                        <span aria-hidden="true" class="w-3 shrink-0 text-xs text-zinc-500 transition-transform duration-150 ease-pop motion-reduce:transition-none dark:text-zinc-400" :class="node.expanded ? 'rotate-90' : ''">{{ node.expandable ? '▸' : '' }}</span>
-                        <span class="truncate" :class="node.kind === 'schema' ? 'font-medium' : node.kind === 'group' ? 'text-zinc-600 dark:text-zinc-300' : ''">{{ node.text }}</span>
-                        <span v-if="node.hint" class="ml-auto shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{{ node.hint }}</span>
+                        <span class="grid w-3.5 shrink-0 place-items-center text-fg-subtle" aria-hidden="true">
+                            <BaseIcon
+                                v-if="node.expandable"
+                                name="chevron-right"
+                                :size="12"
+                                class="transition-transform duration-150 ease-pop motion-reduce:transition-none"
+                                :class="node.expanded ? 'rotate-90' : ''"
+                            />
+                        </span>
+                        <BaseIcon v-if="node.icon" :name="node.icon" :size="14" :class="node.selected ? '' : node.kind === 'schema' ? 'text-fg-muted' : 'text-fg-subtle'" />
+                        <span
+                            class="truncate"
+                            :class="node.kind === 'schema' ? 'font-medium' : node.kind === 'group' ? 'text-fg-muted' : ''"
+                        >{{ node.text }}</span>
+                        <!-- The partition icon already says it: keep the word for screen readers only. -->
+                        <span v-if="node.hint === 'partition'" class="sr-only">(partition)</span>
+                        <span v-else-if="node.hint" class="ml-auto shrink-0 pl-2 text-xs tabular-nums" :class="node.selected ? 'text-accent-soft-fg' : 'text-fg-subtle'">{{ node.hint }}</span>
                     </li>
                 </ul>
             </template>

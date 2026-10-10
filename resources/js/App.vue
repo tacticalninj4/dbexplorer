@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import BaseIcon from './components/BaseIcon.vue';
 import PasswordConfirmModal from './components/PasswordConfirmModal.vue';
+import RoleBadge from './components/RoleBadge.vue';
 import { user } from './config';
 import { useSession } from './composables/session';
 
@@ -19,51 +21,63 @@ const selected = computed({
     },
 });
 const current = computed(() => connections.value.find((connection) => connection.label === selected.value));
+const userName = computed(() => me.value?.user.name ?? user.name);
+const initials = computed(() =>
+    userName.value
+        .split(/\s+/)
+        .filter((part) => part !== '')
+        .slice(0, 2)
+        .map((part) => part.charAt(0).toUpperCase())
+        .join(''),
+);
 </script>
 
 <template>
     <div class="flex h-screen flex-col">
-        <header class="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-zinc-200 bg-white px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900">
-            <router-link to="/" class="rounded text-base font-semibold tracking-tight focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:outline-none">DbExplorer</router-link>
+        <header class="flex h-11 shrink-0 items-center gap-3 border-b border-line bg-panel px-3">
+            <router-link to="/" class="flex items-center gap-2 rounded-md px-1 py-0.5 text-sm font-semibold tracking-tight">
+                <span class="grid size-6 place-items-center rounded-md bg-accent-solid text-on-accent"><BaseIcon name="database" :size="14" /></span>
+                DbExplorer
+            </router-link>
 
-            <div class="flex items-center gap-2">
-                <label for="dbx-connection" class="text-sm text-zinc-500 dark:text-zinc-400">Connection</label>
+            <span class="text-fg-subtle select-none" aria-hidden="true">/</span>
+
+            <div class="flex min-w-0 items-center gap-2">
+                <label for="dbx-connection" class="sr-only">Connection</label>
                 <select
                     id="dbx-connection"
                     v-model="selected"
                     :disabled="connections.length === 0"
-                    class="dbx-input"
+                    class="dbx-select max-w-56 font-medium"
+                    title="Connection"
                 >
-                    <option v-if="connections.length === 0" value="">None available</option>
-                    <option v-else-if="!current" value="" disabled>Choose…</option>
+                    <option v-if="connections.length === 0" value="">No connections</option>
+                    <option v-else-if="!current" value="" disabled>Choose a connection…</option>
                     <option v-for="connection in connections" :key="connection.label" :value="connection.label">
                         {{ connection.label }}
                     </option>
                 </select>
-                <span
-                    v-if="current"
-                    class="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
-                    :title="`Your role on ${current.label}`"
-                >{{ current.role }}</span>
+                <RoleBadge v-if="current" :role="current.role" />
             </div>
 
-            <span class="ml-auto text-sm text-zinc-500 dark:text-zinc-400">{{ me?.user.name ?? user.name }}</span>
+            <span class="ml-auto flex min-w-0 items-center gap-2 text-sm text-fg-muted">
+                <span class="truncate">{{ userName }}</span>
+                <span class="grid size-6 shrink-0 place-items-center rounded-full bg-sunken text-[11px] font-semibold text-fg-muted ring-1 ring-line" aria-hidden="true">{{ initials }}</span>
+            </span>
         </header>
 
-        <div
-            v-if="error"
-            role="alert"
-            class="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
-        >
-            {{ error }}
+        <div v-if="error" role="alert" class="dbx-banner border-danger-line bg-danger-bg text-danger-fg">
+            <BaseIcon name="alert-circle" />
+            <span>{{ error }}</span>
         </div>
         <div
             v-for="(warning, index) in me?.warnings ?? []"
             :key="index"
             role="status"
-            class="border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+            class="dbx-banner border-warning-line bg-warning-bg text-warning-fg"
         >
-            {{ warning }}
+            <BaseIcon name="alert" />
+            <span><span class="sr-only">Warning: </span>{{ warning }}</span>
         </div>
 
         <main class="flex min-h-0 flex-1 flex-col">

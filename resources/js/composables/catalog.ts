@@ -1,3 +1,4 @@
+import { ref } from 'vue';
 import { api, segment } from '../api';
 import type { Column, Constraint, DbObject, Extension, Index, Schema } from '../types';
 
@@ -16,6 +17,9 @@ interface Catalog {
 }
 
 const catalogs = new Map<string, Catalog>();
+
+/** Bumped by invalidate(), so views that hold catalog data (the tree) can reload. */
+export const catalogVersion = ref(0);
 
 function catalog(label: string): Catalog {
     let entry = catalogs.get(label);
@@ -51,6 +55,8 @@ export function invalidate(label: string, schema?: string): void {
     if (!entry) {
         return;
     }
+
+    catalogVersion.value++;
 
     if (schema === undefined) {
         entry.objects.clear();

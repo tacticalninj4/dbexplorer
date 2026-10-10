@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { watchEffect } from 'vue';
 import { useRouter } from 'vue-router';
+import EmptyState from '../components/EmptyState.vue';
 import { useSession } from '../composables/session';
 
 // "/": open the first connection the user may use.
@@ -17,12 +18,9 @@ watchEffect(() => {
 
 <template>
     <div class="flex flex-1 items-center justify-center p-8">
-        <div v-if="me && connections.length === 0" class="max-w-sm text-center">
-            <h1 class="text-lg font-medium">No connections</h1>
-            <p class="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
-                You don't have access to any database connection. Ask an administrator to grant you a role.
-            </p>
-        </div>
-        <p v-else-if="!error" class="text-sm text-zinc-500">Loading…</p>
+        <EmptyState v-if="me && connections.length === 0" icon="database" title="No connections">
+            You don't have access to any database connection. Ask an administrator to grant you a role.
+        </EmptyState>
+        <p v-else-if="!error" class="flex items-center gap-2 text-sm text-fg-muted" role="status"><span class="dbx-spinner" aria-hidden="true" />Loading…</p>
     </div>
 </template>
