@@ -2,45 +2,502 @@
 @import "tailwindcss" source(none);
 @source "./";
 
+/*
+ * DbExplorer design system (docs/UI_AUDIT.md §2 has the rationale)
+ * =========================
+ * A dense, calm workspace for people who spend hours in it: one UI family
+ * (system), one monospace for data and SQL, one accent (blue) for action and
+ * selection, and semantic tones only where they carry meaning.
+ *
+ * Tokens: CSS variables switched by prefers-color-scheme. Use the Tailwind
+ * utilities below; never raw hex or zinc/sky + dark: pairs in templates.
+ *   Surfaces   bg-canvas (app background) · bg-panel (header, sidebar,
+ *              toolbars, dialogs, popovers) · bg-sunken (grid header, code,
+ *              wells) · bg-hover (hovered rows and items)
+ *   Lines      border-line (dividers) · border-line-subtle (row rules) ·
+ *              border-control (input edges, 3:1 on panel)
+ *   Text       text-fg · text-fg-muted (secondary) · text-fg-subtle (hints,
+ *              types, row numbers). All AA on every surface.
+ *   Accent     text-accent (links) · bg-accent-solid + text-on-accent
+ *              (primary) · bg-accent-soft + text-accent-soft-fg (selection)
+ *              · the global :focus-visible outline uses --dbx-focus
+ *   Tones      success, warning, danger, info, orange, violet, teal:
+ *              bg-<tone>-bg, text-<tone>-fg, border-<tone>-line;
+ *              bg-danger-solid for destructive buttons
+ *   Meaning    roles: viewer neutral, editor teal, admin violet (RoleBadge)
+ *              classes: read success, dml warning, ddl orange,
+ *              destructive danger, unknown neutral (ClassificationBadge)
+ *   Type       text-xs 12 · text-sm 13 (UI default) · text-base 14 ·
+ *              text-lg 16 · text-xl 18 · text-data 12.5 (grid cells, mono)
+ *   Density    controls h-7 (28px), small h-6, toolbars min-h-10, rows 26-28px
+ *   Motion     ease-pop with duration-fast 120ms / duration-base 180ms; only
+ *              opacity, transform and colors. Reduced motion keeps fades.
+ *   Radii      rounded (4px) badges · rounded-md (6px) controls ·
+ *              rounded-lg (8px) dialogs, popovers, cards
+ *   Elevation  shadow-xs controls · shadow-pop popovers · shadow-dialog
+ *
+ * Classes: dbx-btn (+ -primary -danger -ghost -danger-ghost -sm -icon
+ * -pressed), dbx-input, dbx-select, dbx-label, dbx-check, dbx-link,
+ * dbx-badge, dbx-kbd, dbx-tabs/dbx-tab, dbx-segmented, dbx-toolbar,
+ * dbx-statusbar, dbx-page-header, dbx-separator, dbx-callout (+ -danger
+ * -warning -info -success), dbx-banner, dbx-kv, dbx-table, dbx-card,
+ * dbx-menu/dbx-menu-item, dbx-code, dbx-skeleton, dbx-spinner.
+ * Components: BaseIcon, BaseBadge, RoleBadge, ClassificationBadge, EmptyState,
+ * SkeletonRows, ModalDialog, CodeBlock, ResultBar, DataGrid.
+ */
+
 @theme {
+    --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+    --text-xs: 0.75rem;
+    --text-xs--line-height: 1rem;
+    --text-sm: 0.8125rem;
+    --text-sm--line-height: 1.25rem;
+    --text-base: 0.875rem;
+    --text-base--line-height: 1.375rem;
+    --text-lg: 1rem;
+    --text-lg--line-height: 1.5rem;
+    --text-xl: 1.125rem;
+    --text-xl--line-height: 1.625rem;
+    --text-data: 0.78125rem;
+    --text-data--line-height: 1.25rem;
+
     /* Stronger than the built-in ease-out: instant feedback, gentle settle. */
     --ease-pop: cubic-bezier(0.23, 1, 0.32, 1);
+    --duration-fast: 120ms;
+    --duration-base: 180ms;
+
+    --shadow-pop: 0 6px 16px -4px rgb(0 0 0 / 0.14), 0 2px 4px -2px rgb(0 0 0 / 0.08);
+    --shadow-dialog: 0 20px 48px -12px rgb(0 0 0 / 0.3), 0 4px 12px -4px rgb(0 0 0 / 0.12);
+}
+
+@theme inline {
+    --color-canvas: var(--dbx-canvas);
+    --color-panel: var(--dbx-panel);
+    --color-sunken: var(--dbx-sunken);
+    --color-hover: var(--dbx-hover);
+    --color-line: var(--dbx-line);
+    --color-line-subtle: var(--dbx-line-subtle);
+    --color-control: var(--dbx-control);
+    --color-fg: var(--dbx-fg);
+    --color-fg-muted: var(--dbx-fg-muted);
+    --color-fg-subtle: var(--dbx-fg-subtle);
+    --color-accent: var(--dbx-accent);
+    --color-accent-solid: var(--dbx-accent-solid);
+    --color-accent-solid-hover: var(--dbx-accent-solid-hover);
+    --color-on-accent: var(--dbx-on-accent);
+    --color-accent-soft: var(--dbx-accent-soft);
+    --color-accent-soft-fg: var(--dbx-accent-soft-fg);
+    --color-focus: var(--dbx-focus);
+    --color-success-bg: var(--dbx-success-bg);
+    --color-success-fg: var(--dbx-success-fg);
+    --color-success-line: var(--dbx-success-line);
+    --color-warning-bg: var(--dbx-warning-bg);
+    --color-warning-fg: var(--dbx-warning-fg);
+    --color-warning-line: var(--dbx-warning-line);
+    --color-danger-bg: var(--dbx-danger-bg);
+    --color-danger-fg: var(--dbx-danger-fg);
+    --color-danger-line: var(--dbx-danger-line);
+    --color-danger-solid: var(--dbx-danger-solid);
+    --color-danger-solid-hover: var(--dbx-danger-solid-hover);
+    --color-info-bg: var(--dbx-accent-soft);
+    --color-info-fg: var(--dbx-accent-soft-fg);
+    --color-info-line: var(--dbx-info-line);
+    --color-orange-bg: var(--dbx-orange-bg);
+    --color-orange-fg: var(--dbx-orange-fg);
+    --color-orange-line: var(--dbx-orange-line);
+    --color-violet-bg: var(--dbx-violet-bg);
+    --color-violet-fg: var(--dbx-violet-fg);
+    --color-violet-line: var(--dbx-violet-line);
+    --color-teal-bg: var(--dbx-teal-bg);
+    --color-teal-fg: var(--dbx-teal-fg);
+    --color-teal-line: var(--dbx-teal-line);
 }
 
 @layer base {
     :root {
         color-scheme: light dark;
+
+        --dbx-canvas: #f7f7f8;
+        --dbx-panel: #ffffff;
+        --dbx-sunken: #f3f3f5;
+        --dbx-hover: #ececef;
+        --dbx-line: #e3e3e7;
+        --dbx-line-subtle: #efeff2;
+        --dbx-control: #8f8f99;
+        --dbx-fg: #18181b;
+        --dbx-fg-muted: #52525b;
+        --dbx-fg-subtle: #686871;
+        --dbx-accent: #0369a1;
+        --dbx-accent-solid: #0369a1;
+        --dbx-accent-solid-hover: #075985;
+        --dbx-on-accent: #ffffff;
+        --dbx-accent-soft: #e6f3fb;
+        --dbx-accent-soft-fg: #0c4a6e;
+        --dbx-focus: #0284c7;
+        --dbx-info-line: #b9def3;
+        --dbx-success-bg: #ecfdf3;
+        --dbx-success-fg: #05603a;
+        --dbx-success-line: #a6e9c5;
+        --dbx-warning-bg: #fffaeb;
+        --dbx-warning-fg: #93370d;
+        --dbx-warning-line: #fedf89;
+        --dbx-danger-bg: #fef3f2;
+        --dbx-danger-fg: #b42318;
+        --dbx-danger-line: #fecdca;
+        --dbx-danger-solid: #d92d20;
+        --dbx-danger-solid-hover: #b42318;
+        --dbx-orange-bg: #fff4ed;
+        --dbx-orange-fg: #b93815;
+        --dbx-orange-line: #f9dbaf;
+        --dbx-violet-bg: #f4f3ff;
+        --dbx-violet-fg: #5925dc;
+        --dbx-violet-line: #d9d6fe;
+        --dbx-teal-bg: #f0fdf9;
+        --dbx-teal-fg: #107569;
+        --dbx-teal-line: #99f6e0;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --dbx-canvas: #0c0c0e;
+            --dbx-panel: #141417;
+            --dbx-sunken: #1a1a1e;
+            --dbx-hover: #222227;
+            --dbx-line: #2a2a30;
+            --dbx-line-subtle: #1f1f24;
+            --dbx-control: #686872;
+            --dbx-fg: #ededf0;
+            --dbx-fg-muted: #a8a8b3;
+            --dbx-fg-subtle: #8d8d98;
+            --dbx-accent: #38bdf8;
+            --dbx-accent-solid: #0ea5e9;
+            --dbx-accent-solid-hover: #38bdf8;
+            --dbx-on-accent: #03131d;
+            --dbx-accent-soft: #0b2738;
+            --dbx-accent-soft-fg: #bae6fd;
+            --dbx-focus: #38bdf8;
+            --dbx-info-line: #164e6e;
+            --dbx-success-bg: #0b2219;
+            --dbx-success-fg: #75e0a7;
+            --dbx-success-line: #1b4d36;
+            --dbx-warning-bg: #2a1e08;
+            --dbx-warning-fg: #fec84b;
+            --dbx-warning-line: #5b4210;
+            --dbx-danger-bg: #2b1110;
+            --dbx-danger-fg: #fda29b;
+            --dbx-danger-line: #5f1f1b;
+            --dbx-danger-solid: #d92d20;
+            --dbx-danger-solid-hover: #b42318;
+            --dbx-orange-bg: #2b1609;
+            --dbx-orange-fg: #f7b27a;
+            --dbx-orange-line: #5c2f12;
+            --dbx-violet-bg: #1e1838;
+            --dbx-violet-fg: #bdb4fe;
+            --dbx-violet-line: #3e3378;
+            --dbx-teal-bg: #0a2421;
+            --dbx-teal-fg: #5fe9d0;
+            --dbx-teal-line: #134e48;
+        }
     }
 
     body {
-        @apply min-h-screen bg-zinc-50 text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
+        @apply min-h-screen bg-canvas font-sans text-sm text-fg antialiased;
+    }
+
+    /* One focus ring everywhere; components only change its offset. */
+    :focus-visible {
+        outline: 2px solid var(--dbx-focus);
+        outline-offset: 2px;
+    }
+
+    ::selection {
+        background-color: color-mix(in srgb, var(--dbx-focus) 30%, transparent);
+    }
+
+    input[type="checkbox"],
+    input[type="radio"] {
+        accent-color: var(--dbx-accent-solid);
     }
 }
 
 @layer components {
+    /* Buttons ----------------------------------------------------------- */
     .dbx-btn {
-        @apply inline-flex items-center rounded-md border border-zinc-300 bg-white px-2.5 py-1 text-sm whitespace-nowrap text-zinc-800 shadow-xs transition-[background-color,border-color,color,transform] duration-150 ease-pop hover:bg-zinc-50 focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:outline-none motion-safe:active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700;
+        @apply inline-flex h-7 shrink-0 cursor-default items-center justify-center gap-1.5 rounded-md border border-line bg-panel px-2.5 text-sm font-medium whitespace-nowrap text-fg shadow-xs select-none disabled:opacity-50;
+        transition-property: background-color, border-color, color, transform, opacity;
+        transition-duration: var(--duration-fast);
+        transition-timing-function: var(--ease-pop);
+
+        &:hover:not(:disabled) {
+            @apply bg-hover;
+        }
+
+        & > svg {
+            @apply size-3.5 shrink-0;
+        }
     }
 
     .dbx-btn-primary {
-        @apply border-sky-700 bg-sky-600 text-white hover:bg-sky-700 dark:border-sky-500 dark:bg-sky-600 dark:hover:bg-sky-500;
+        @apply border-transparent bg-accent-solid text-on-accent;
+
+        &:hover:not(:disabled) {
+            @apply bg-accent-solid-hover;
+        }
     }
 
     .dbx-btn-danger {
-        @apply border-red-700 bg-red-600 text-white hover:bg-red-700 dark:border-red-500 dark:bg-red-600 dark:hover:bg-red-500;
+        @apply border-transparent bg-danger-solid text-white;
+
+        &:hover:not(:disabled) {
+            @apply bg-danger-solid-hover;
+        }
     }
 
-    .dbx-input {
-        @apply rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm transition-[border-color,box-shadow] duration-150 ease-pop focus:ring-2 focus:ring-sky-500 focus:outline-none disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-800;
+    /* Quiet: toolbars and inline actions. */
+    .dbx-btn-ghost {
+        @apply border-transparent bg-transparent text-fg-muted shadow-none;
+
+        &:hover:not(:disabled) {
+            @apply text-fg;
+        }
+    }
+
+    /* A destructive action that is not the dialog's commit button. */
+    .dbx-btn-danger-ghost {
+        @apply text-danger-fg;
+
+        &:hover:not(:disabled) {
+            @apply border-danger-line bg-danger-bg;
+        }
+    }
+
+    .dbx-btn-pressed {
+        @apply border-info-line bg-accent-soft text-accent-soft-fg;
+
+        &:hover:not(:disabled) {
+            @apply bg-accent-soft;
+        }
+    }
+
+    .dbx-btn-sm {
+        @apply h-6 gap-1 px-2 text-xs;
+    }
+
+    .dbx-btn-icon {
+        @apply w-7 px-0;
+
+        &.dbx-btn-sm {
+            @apply w-6;
+        }
+    }
+
+    /* Form controls ----------------------------------------------------- */
+    .dbx-input,
+    .dbx-select {
+        @apply h-7 min-w-0 rounded-md border border-control bg-panel px-2 text-sm text-fg placeholder:text-fg-subtle disabled:border-line disabled:bg-sunken disabled:text-fg-muted;
+        transition: border-color var(--duration-fast) var(--ease-pop);
+
+        &:focus-visible {
+            outline-offset: -1px;
+        }
+
+        &[aria-invalid="true"] {
+            @apply border-danger-fg;
+        }
+    }
+
+    .dbx-select {
+        @apply cursor-default pr-1;
+    }
+
+    .dbx-label {
+        @apply mb-1 block text-xs font-medium text-fg-muted;
+    }
+
+    .dbx-check {
+        @apply inline-flex cursor-default items-center gap-1.5 text-sm text-fg-muted select-none;
     }
 
     .dbx-link {
-        @apply rounded text-sky-700 underline-offset-2 transition-colors duration-150 ease-pop hover:underline focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:outline-none dark:text-sky-400;
+        @apply rounded-sm text-accent underline-offset-2 hover:underline;
     }
 
+    /* Inline labels ----------------------------------------------------- */
+    .dbx-badge {
+        @apply inline-flex h-5 shrink-0 items-center gap-1 rounded border border-line bg-sunken px-1.5 text-xs leading-none font-medium whitespace-nowrap text-fg-muted;
+
+        & > svg {
+            @apply size-3 shrink-0;
+        }
+    }
+
+    .dbx-kbd {
+        @apply inline-flex h-4.5 min-w-4.5 items-center justify-center rounded border border-current/25 px-1 font-sans text-[11px] leading-none font-medium;
+    }
+
+    /* Tabs: underline for page sections, segmented for small view toggles. */
+    .dbx-tabs {
+        @apply flex shrink-0 items-stretch gap-0.5 overflow-x-auto border-b border-line bg-panel px-2;
+    }
+
+    .dbx-tab {
+        @apply relative inline-flex h-9 cursor-default items-center gap-1.5 px-2.5 text-sm whitespace-nowrap text-fg-muted select-none;
+        transition: color var(--duration-fast) var(--ease-pop);
+        outline-offset: -2px;
+
+        &:hover {
+            @apply text-fg;
+        }
+
+        &::after {
+            @apply absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-transparent content-[''];
+            transition: background-color var(--duration-fast) var(--ease-pop);
+        }
+
+        &[aria-selected="true"] {
+            @apply text-fg;
+            font-weight: 550;
+
+            &::after {
+                @apply bg-accent-solid;
+            }
+        }
+    }
+
+    .dbx-segmented {
+        @apply inline-flex items-center gap-0.5 rounded-md bg-sunken p-0.5;
+
+        & > button {
+            @apply inline-flex h-6 cursor-default items-center gap-1 rounded px-2 text-xs font-medium text-fg-muted;
+            transition:
+                background-color var(--duration-fast) var(--ease-pop),
+                color var(--duration-fast) var(--ease-pop);
+
+            &:hover {
+                @apply text-fg;
+            }
+
+            &[aria-selected="true"],
+            &[aria-pressed="true"] {
+                @apply bg-panel text-fg shadow-xs;
+            }
+        }
+    }
+
+    /* Bars -------------------------------------------------------------- */
+    .dbx-toolbar {
+        @apply flex min-h-10 shrink-0 flex-wrap items-center gap-1.5 border-b border-line bg-panel px-3 py-1.5;
+    }
+
+    .dbx-statusbar {
+        @apply flex min-h-8 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-line bg-panel px-3 py-1 text-xs text-fg-muted tabular-nums;
+    }
+
+    .dbx-page-header {
+        @apply flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-panel px-4 py-2.5;
+    }
+
+    .dbx-separator {
+        @apply mx-0.5 h-4 w-px shrink-0 bg-line;
+    }
+
+    /* Callouts: tone + icon + words, never color alone. */
+    .dbx-callout {
+        @apply flex gap-2.5 rounded-md border px-3 py-2 text-sm;
+
+        & > svg {
+            @apply mt-0.5 size-4 shrink-0;
+        }
+    }
+
+    .dbx-callout-danger {
+        @apply border-danger-line bg-danger-bg text-danger-fg;
+    }
+
+    .dbx-callout-warning {
+        @apply border-warning-line bg-warning-bg text-warning-fg;
+    }
+
+    .dbx-callout-info {
+        @apply border-info-line bg-info-bg text-info-fg;
+    }
+
+    .dbx-callout-success {
+        @apply border-success-line bg-success-bg text-success-fg;
+    }
+
+    /* Full-width strip under a header (session errors, warnings, notices). */
+    .dbx-banner {
+        @apply flex shrink-0 items-start gap-2 border-b px-4 py-1.5 text-sm;
+
+        & > svg {
+            @apply mt-0.5 size-4 shrink-0;
+        }
+    }
+
+    /* Key/value lists (stats, function details, overview). */
+    .dbx-kv {
+        @apply grid max-w-3xl grid-cols-[minmax(9rem,max-content)_1fr] gap-x-8 text-sm;
+
+        & > dt {
+            @apply border-b border-line-subtle py-1.5 text-fg-muted;
+        }
+
+        & > dd {
+            @apply min-w-0 border-b border-line-subtle py-1.5 break-words text-fg tabular-nums;
+        }
+    }
+
+    /* Reference tables (structure, indexes, schemas, runs). */
+    .dbx-table {
+        @apply w-full border-separate border-spacing-0 text-sm;
+
+        & th {
+            @apply border-b border-line px-3 py-1.5 text-left text-xs font-medium whitespace-nowrap text-fg-muted;
+        }
+
+        & td {
+            @apply border-b border-line-subtle px-3 py-1.5 align-baseline;
+        }
+
+        & tbody tr {
+            transition: background-color var(--duration-fast) ease;
+        }
+
+        & tbody tr:hover {
+            @apply bg-hover/60;
+        }
+    }
+
+    .dbx-card {
+        @apply rounded-lg border border-line bg-panel;
+    }
+
+    /* Popover menus anchored to a trigger. */
+    .dbx-menu {
+        @apply absolute z-30 mt-1 overflow-auto rounded-lg border border-line bg-panel p-1 text-sm shadow-pop;
+    }
+
+    .dbx-menu-item {
+        @apply flex w-full cursor-default items-center gap-2 rounded px-2 py-1 text-left text-fg hover:bg-hover;
+        outline-offset: -2px;
+    }
+
+    .dbx-code {
+        @apply overflow-auto rounded-md border border-line bg-sunken p-3 font-mono text-xs leading-relaxed whitespace-pre text-fg;
+    }
+
+    /* Loading ----------------------------------------------------------- */
     .dbx-spinner {
-        @apply inline-block h-3.5 w-3.5 shrink-0 rounded-full border-2 border-zinc-300 border-t-sky-600 dark:border-zinc-600 dark:border-t-sky-400;
+        @apply inline-block size-3.5 shrink-0 rounded-full border-2 border-fg-subtle/30 border-t-accent;
         animation: dbx-spin 0.7s linear infinite;
+    }
+
+    .dbx-skeleton {
+        @apply block h-3 rounded bg-hover;
+        animation: dbx-pulse 1.4s ease-in-out infinite;
     }
 
     @keyframes dbx-spin {
@@ -49,25 +506,81 @@
         }
     }
 
-    @media (prefers-reduced-motion: reduce) {
-        .dbx-spinner {
-            animation-duration: 1.8s;
+    @keyframes dbx-pulse {
+        50% {
+            opacity: 0.5;
         }
     }
+}
 
-    .dbx-badge {
-        @apply rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300;
+/* Press feedback, only for people who don't mind motion. */
+@media (prefers-reduced-motion: no-preference) {
+    .dbx-btn:active:not(:disabled) {
+        transform: scale(0.97);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .dbx-spinner {
+        animation-duration: 1.8s;
     }
 
-    .dbx-table {
-        @apply w-full border-collapse text-sm;
+    .dbx-skeleton {
+        animation: none;
+    }
+}
 
-        & th {
-            @apply border-b border-zinc-200 px-2 py-1.5 text-left font-medium text-zinc-600 dark:border-zinc-800 dark:text-zinc-300;
-        }
+/* Popovers scale in from their trigger, not from center. */
+.dbx-pop-enter-active,
+.dbx-pop-leave-active {
+    transform-origin: top right;
+    transition:
+        opacity 150ms var(--ease-pop),
+        transform 150ms var(--ease-pop);
+}
 
-        & td {
-            @apply border-b border-zinc-100 px-2 py-1.5 align-top dark:border-zinc-800/60;
-        }
+.dbx-pop-leave-active {
+    transition-duration: 100ms;
+}
+
+.dbx-pop-enter-from,
+.dbx-pop-leave-to {
+    opacity: 0;
+    transform: scale(0.96);
+}
+
+.dbx-fade-enter-active,
+.dbx-fade-leave-active {
+    transition: opacity 150ms ease;
+}
+
+.dbx-fade-enter-from,
+.dbx-fade-leave-to {
+    opacity: 0;
+}
+
+/* Inline reveals (filter panel, notices): a short drop, no height animation. */
+.dbx-reveal-enter-active {
+    transition:
+        opacity var(--duration-base) var(--ease-pop),
+        transform var(--duration-base) var(--ease-pop);
+}
+
+.dbx-reveal-enter-from {
+    opacity: 0;
+    transform: translateY(-4px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .dbx-pop-enter-active,
+    .dbx-pop-leave-active,
+    .dbx-reveal-enter-active {
+        transition-property: opacity;
+    }
+
+    .dbx-pop-enter-from,
+    .dbx-pop-leave-to,
+    .dbx-reveal-enter-from {
+        transform: none;
     }
 }

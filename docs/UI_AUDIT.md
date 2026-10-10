@@ -56,12 +56,12 @@ The tokens and component classes live in `resources/js/app.css`, with documentat
   - Content: `dbx-kv`, `dbx-table`, `dbx-card`, `dbx-menu`/`dbx-menu-item` and `dbx-code`.
   - Loading: `dbx-skeleton` and `dbx-spinner`.
 - **Components:**
-  - `Icon`: inline SVG with a 16 px grid, a 1.5 stroke and `currentColor`.
-  - `Badge` (`tone` prop), `RoleBadge` and `ClassificationBadge`.
+  - `BaseIcon`: inline SVG with a 16 px grid, a 1.5 stroke and `currentColor`. Shapes are data rendered as SVG elements, never HTML strings.
+  - `BaseBadge` (`tone` and `icon` props), `RoleBadge` and `ClassificationBadge`.
   - `EmptyState`: icon, title, hint and an actions slot.
   - `SkeletonRows`.
   - `ModalDialog`: title, description, a close button and a `footer` slot.
-  - `CodeBlock` and `DataGrid`.
+  - `CodeBlock`, `ResultBar` (the SQL result summary) and `DataGrid` (toolbar and footer slots, resizable columns, arrow-key rows).
 
 ## 3. Contrast (WCAG 2.x, computed)
 

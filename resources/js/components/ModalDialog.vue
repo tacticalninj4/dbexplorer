@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue';
+import BaseIcon from './BaseIcon.vue';
 
 /**
  * An in-page modal on the native <dialog>: focus is trapped and Esc closes
  * it. Never window.confirm/prompt.
  */
-const props = withDefaults(defineProps<{ open: boolean; title: string; wide?: boolean }>(), { wide: false });
+const props = withDefaults(defineProps<{ open: boolean; title: string; description?: string; wide?: boolean }>(), { description: undefined, wide: false });
 const emit = defineEmits<{ close: [] }>();
 
 const dialog = ref<HTMLDialogElement | null>(null);
@@ -23,26 +24,39 @@ function sync(open: boolean): void {
     }
 }
 
-watch(() => props.open, sync);
+// After the DOM update, so slot content (and its [autofocus]) exists when it opens.
+watch(() => props.open, sync, { flush: 'post' });
 onMounted(() => sync(props.open));
 </script>
 
 <template>
     <dialog
         ref="dialog"
-        class="m-auto w-full max-h-[85vh] overflow-y-auto rounded-lg border border-zinc-200 bg-white p-0 text-zinc-900 shadow-xl backdrop:bg-zinc-950/40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+        class="relative m-auto max-h-[85vh] w-[calc(100%-2rem)] overflow-y-auto rounded-lg border border-line bg-panel p-0 text-fg shadow-dialog backdrop:bg-black/40"
         :class="wide ? 'max-w-3xl' : 'max-w-md'"
         :aria-label="title"
         @cancel.prevent="emit('close')"
     >
-        <div class="p-5">
-            <h2 class="text-base font-semibold">{{ title }}</h2>
+        <div class="px-5 pt-4 pr-12">
+            <h2 class="text-base font-semibold break-words">{{ title }}</h2>
+            <p v-if="description" class="mt-0.5 text-sm text-fg-muted">{{ description }}</p>
+        </div>
+        <div class="px-5 pt-3 pb-5">
             <slot />
         </div>
+        <!-- Last in the DOM, so opening focuses the first field or [autofocus], not Close. -->
+        <button type="button" class="dbx-btn dbx-btn-ghost dbx-btn-icon dbx-btn-sm absolute top-3.5 right-3.5" aria-label="Close" @click="emit('close')">
+            <BaseIcon name="x" />
+        </button>
     </dialog>
 </template>
 
 <style scoped>
+/* The dialog is a container, not a control: its children show focus. */
+dialog:focus-visible {
+    outline: none;
+}
+
 dialog {
     transition:
         opacity 180ms cubic-bezier(0.23, 1, 0.32, 1),
