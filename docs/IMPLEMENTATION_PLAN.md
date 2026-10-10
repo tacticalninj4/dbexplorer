@@ -395,7 +395,7 @@ Plain event classes, constructed with public properties (PHP 8.0-safe, no `reado
 | S6 | `RateLimitTest` | M1/M2 |
 | S7 | `ConnectionAllowlistTest`, `/api/me` leak test | M0 |
 | S8–S10 | `QueryRunnerTest` (pgsql) | M1 |
-| S11 | `ClassifierEvasionTest` (pgsql): the DB rejects what the classifier misses | M2 |
+| S11 | `ClassifierEvasionTest` (pgsql): the DB rejects what the classifier misses and the role's grants forbid | M2 |
 | S12 | `RowsApiTest` injection cases | M1 |
 | S13 | `HiddenObjectsTest` | M1 |
 | S14 | `MaskerTest`, export masking | M1/M3 |
