@@ -16,8 +16,13 @@ use TacticalNinj4\DbExplorer\Security\PasswordConfirmation;
  * rules. Every action takes `preview` (returns `{data: {sql}}`, runs
  * nothing) and `unmask` (admins only, audited), in the query or the body.
  *
- * - insert: `{values: {column: value}}` → 201 `{data: {row}}`
- * - update: `{key: {pk: value}, original: {column: value}, changes: {column: value}}` → `{data: {row}}`
+ * - insert: `{values: {column: value}}` → 201 `{data: {row}}`. At least one
+ *   value is required; `{defaults: true}` (with no values) inserts a row of
+ *   column defaults instead, and no values without it is a 422.
+ * - update: `{key: {pk: value}, original: {column: value}, changes: {column: value}}` → `{data: {row}}`.
+ *   `overwrite: true` marks a deliberate re-save after a 409 with the
+ *   conflict's `current` row as `original`; it's still conflict-checked, and
+ *   only adds `meta.overwrite` to the audit entry.
  * - delete: `{key, original}` → `{data: {deleted: true}}`; destructive, so it
  *   needs a recent password confirmation (S5, 423) unless previewing.
  *
@@ -33,7 +38,9 @@ class RowWriteController
     {
         [$connection, $role, $options] = $this->context($request);
 
-        $result = $this->writer->insert($connection, $role, $schema, $name, $request->input('values', []), $options);
+        $request->validate(['defaults' => ['sometimes', 'boolean']]);
+
+        $result = $this->writer->insert($connection, $role, $schema, $name, $request->input('values', []), $options + ['defaults' => $request->boolean('defaults')]);
 
         return isset($result['sql'])
             ? new JsonResponse(['data' => ['sql' => $result['sql']]])
@@ -43,10 +50,11 @@ class RowWriteController
     public function update(Request $request, string $label, string $schema, string $name): JsonResponse
     {
         [$connection, $role, $options] = $this->context($request);
+        $request->validate(['overwrite' => ['sometimes', 'boolean']]);
 
         $result = $this->writer->update(
             $connection, $role, $schema, $name,
-            $request->input('key'), $request->input('original', []), $request->input('changes'), $options,
+            $request->input('key'), $request->input('original', []), $request->input('changes'), $options + ['overwrite' => $request->boolean('overwrite')],
         );
 
         return new JsonResponse(['data' => isset($result['sql']) ? ['sql' => $result['sql']] : ['row' => $result['row']]]);
