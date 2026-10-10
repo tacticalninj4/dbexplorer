@@ -3,8 +3,15 @@ import { computed, nextTick, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api, ApiError, describeError, segment } from '../api';
 import CodeBlock from '../components/CodeBlock.vue';
+import BaseBadge from '../components/BaseBadge.vue';
 import DdlForm from '../components/DdlForm.vue';
+import type { DdlOutcome } from '../components/DdlForm.vue';
+import EmptyState from '../components/EmptyState.vue';
+import BaseIcon from '../components/BaseIcon.vue';
+import type { IconName } from '../components/BaseIcon.vue';
+import SkeletonRows from '../components/SkeletonRows.vue';
 import TableData from '../components/TableData.vue';
+import { invalidate } from '../composables/catalog';
 import { sendToEditor } from '../composables/editorInbox';
 import { findConnection } from '../composables/session';
 import { formatBytes, formatDate, formatNumber } from '../composables/format';
@@ -49,7 +56,10 @@ const isFunction = computed(() => route.query.fn === '1');
 const object = ref<DbObject | null>(null);
 const fn = ref<FunctionDefinition | null>(null);
 const error = ref<string | null>(null);
+const notFound = ref(false);
 const loading = ref(false);
+/** What the last schema change did, shown after its dialog closes (F25a). */
+const notice = ref<{ text: string; run?: number } | null>(null);
 
 /** M2 schema editing (PRD §7.4): admins only, and only tables have forms. */
 const ddlOpen = ref(false);
@@ -93,6 +103,7 @@ async function loadObject(): Promise<void> {
     object.value = null;
     fn.value = null;
     error.value = null;
+    notFound.value = false;
     tabData.value = {};
     loading.value = true;
 
@@ -110,7 +121,8 @@ async function loadObject(): Promise<void> {
         }
     } catch (e) {
         if (id === sequence) {
-            error.value = e instanceof ApiError && e.status === 404 ? 'This object does not exist, or you cannot access it.' : describeError(e);
+            notFound.value = e instanceof ApiError && e.status === 404;
+            error.value = notFound.value ? 'This object does not exist, or you cannot access it.' : describeError(e);
         }
     } finally {
         if (id === sequence) {
@@ -199,48 +211,131 @@ const constraintLabel: Record<Constraint['type'], string> = {
     trigger: 'Trigger',
 };
 
-watch(() => [label.value, schema.value, name.value, isFunction.value], loadObject, { immediate: true });
+const TYPE_ICONS: Partial<Record<string, IconName>> = {
+    table: 'table',
+    partitioned_table: 'partition',
+    foreign_table: 'table',
+    view: 'view',
+    materialized_view: 'matview',
+    sequence: 'sequence',
+    function: 'function',
+    procedure: 'function',
+    enum: 'type',
+    domain: 'type',
+    composite_type: 'type',
+};
+const typeIcon = computed<IconName>(() => (fn.value ? 'function' : TYPE_ICONS[object.value?.type ?? ''] ?? 'table'));
+
+/**
+ * After the DDL dialog: refresh the tree's catalog, and follow the object
+ * when it was renamed or dropped (F25b). Background runs get a notice that
+ * outlives the dialog, with a link to the Runs page (F25a).
+ */
+function onDdlClose(outcome: DdlOutcome | null): void {
+    ddlOpen.value = false;
+
+    if (!outcome) {
+        return;
+    }
+
+    invalidate(label.value);
+
+    if (outcome.op === 'drop_table' && outcome.run === undefined) {
+        void router.push({ name: 'connection', params: { label: label.value }, query: { dropped: `${schema.value}.${name.value}` } });
+        return;
+    }
+
+    if (outcome.op === 'rename_table' && outcome.to && outcome.run === undefined) {
+        keepNotice = true;
+        void router.replace({ name: 'object', params: { label: label.value, schema: schema.value, name: outcome.to }, query: route.query });
+        notice.value = { text: `Renamed ${schema.value}.${name.value} to ${schema.value}.${outcome.to}.` };
+        return;
+    }
+
+    notice.value = outcome.run !== undefined
+        ? { text: `${outcome.title} was queued as background run #${outcome.run}: CONCURRENTLY can't run inside a transaction.`, run: outcome.run }
+        : { text: `${outcome.title}: done.` };
+    void loadObject();
+}
+
+/** A rename navigates to the new name: its notice survives that one move. */
+let keepNotice = false;
+
+watch(
+    () => [label.value, schema.value, name.value, isFunction.value],
+    () => {
+        if (!keepNotice) {
+            notice.value = null;
+        }
+        keepNotice = false;
+        void loadObject();
+    },
+    { immediate: true },
+);
 watch(activeTab, () => void loadTab());
 </script>
 
 <template>
     <div class="flex min-h-0 flex-1 flex-col">
-        <header class="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
-            <h1 class="text-lg font-semibold break-all">
-                <span class="text-zinc-400">{{ schema }}.</span>{{ name }}
+        <header class="dbx-page-header">
+            <BaseIcon :name="typeIcon" class="text-fg-subtle" />
+            <h1 class="min-w-0 text-lg font-semibold break-all">
+                <span class="font-normal text-fg-subtle">{{ schema }}.</span>{{ name }}
             </h1>
-            <span v-if="typeLabel" class="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">{{ typeLabel }}</span>
-            <span v-if="object?.parent" class="text-sm text-zinc-500">
+            <BaseBadge v-if="typeLabel">{{ typeLabel }}</BaseBadge>
+            <span v-if="object?.parent" class="text-sm text-fg-muted">
                 partition of
-                <router-link :to="relationRoute({ schema: object.parent.schema, table: object.parent.name })" class="dbx-link">{{ object.parent.schema }}.{{ object.parent.name }}</router-link>
+                <router-link :to="relationRoute({ schema: object.parent.schema, table: object.parent.name })" class="dbx-link font-mono text-xs">{{ object.parent.schema }}.{{ object.parent.name }}</router-link>
             </span>
-            <button v-if="object && object.type !== 'enum' && object.type !== 'domain' && object.type !== 'composite_type'" type="button" class="dbx-btn ml-auto" @click="queryInEditor">
-                Open in SQL editor
-            </button>
-            <button v-if="isAdmin && alterable" type="button" class="dbx-btn dbx-btn-primary" @click="ddlOpen = true">
-                Alter table
-            </button>
-            <p v-if="object?.comment || fn?.comment" class="w-full text-sm text-zinc-500 dark:text-zinc-400">{{ object?.comment ?? fn?.comment }}</p>
+            <div class="ml-auto flex items-center gap-1.5">
+                <button v-if="object && object.type !== 'enum' && object.type !== 'domain' && object.type !== 'composite_type'" type="button" class="dbx-btn" @click="queryInEditor">
+                    <BaseIcon name="terminal" />Open in SQL editor
+                </button>
+                <button v-if="isAdmin && alterable" type="button" class="dbx-btn" title="Add, rename or drop columns and indexes, or drop the table" @click="ddlOpen = true">
+                    <BaseIcon name="sliders" />Alter table
+                </button>
+            </div>
+            <p v-if="object?.comment || fn?.comment" class="w-full text-sm text-fg-muted">{{ object?.comment ?? fn?.comment }}</p>
         </header>
 
-        <p v-if="loading" class="p-4 text-sm text-zinc-500">Loading…</p>
-        <div v-else-if="error" role="alert" class="m-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-            {{ error }}
-        </div>
+        <Transition name="dbx-reveal">
+            <div v-if="notice" role="status" class="dbx-banner border-info-line bg-info-bg text-info-fg">
+                <BaseIcon :name="notice.run !== undefined ? 'clock' : 'check-circle'" />
+                <span class="flex-1">
+                    {{ notice.text }}
+                    <router-link v-if="notice.run !== undefined" :to="{ name: 'runs', params: { label } }" class="ml-1 font-medium underline underline-offset-2">View runs</router-link>
+                </span>
+                <button type="button" class="dbx-btn dbx-btn-ghost dbx-btn-icon dbx-btn-sm -my-0.5 text-current" aria-label="Dismiss" @click="notice = null"><BaseIcon name="x" /></button>
+            </div>
+        </Transition>
+
+        <div v-if="loading" class="p-4"><SkeletonRows :rows="5" :columns="4" /></div>
+        <EmptyState
+            v-else-if="error"
+            :icon="notFound ? 'search' : 'alert-circle'"
+            :tone="notFound ? 'neutral' : 'danger'"
+            :title="notFound ? 'Object not found' : 'Could not load this object'"
+            role="alert"
+        >
+            {{ notFound ? `${schema}.${name} does not exist, or you can't access it. It may have been dropped or renamed.` : error }}
+            <template #actions>
+                <router-link :to="{ name: 'connection', params: { label } }" class="dbx-btn"><BaseIcon name="chevron-left" />Back to overview</router-link>
+                <button v-if="!notFound" type="button" class="dbx-btn" @click="loadObject"><BaseIcon name="refresh" />Try again</button>
+            </template>
+        </EmptyState>
 
         <template v-else-if="activeTab">
-            <div role="tablist" aria-label="Object details" class="flex gap-1 overflow-x-auto border-b border-zinc-200 px-3 dark:border-zinc-800" @keydown="onTabKeydown">
+            <div role="tablist" aria-label="Object details" class="dbx-tabs" @keydown="onTabKeydown">
                 <button
                     v-for="tab in tabs"
                     :id="`dbx-tab-${tab}`"
                     :key="tab"
                     type="button"
                     role="tab"
+                    class="dbx-tab"
                     :aria-selected="tab === activeTab"
                     :aria-controls="`dbx-panel-${tab}`"
                     :tabindex="tab === activeTab ? 0 : -1"
-                    class="-mb-px border-b-2 px-3 py-2 text-sm whitespace-nowrap transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:outline-none"
-                    :class="tab === activeTab ? 'border-sky-600 font-medium text-sky-700 dark:text-sky-400' : 'border-transparent text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'"
                     @click="selectTab(tab)"
                 >
                     {{ TAB_TITLES[tab] }}
@@ -252,126 +347,139 @@ watch(activeTab, () => void loadTab());
                 role="tabpanel"
                 :aria-labelledby="`dbx-tab-${activeTab}`"
                 class="flex min-h-0 flex-1 flex-col"
-                :class="activeTab === 'data' ? '' : 'overflow-auto p-4'"
+                :class="activeTab === 'data' ? '' : 'overflow-auto'"
             >
                 <TableData v-if="activeTab === 'data'" :label="label" :schema="schema" :name="name" />
 
-                <template v-else>
-                    <p v-if="tabLoading" class="text-sm text-zinc-500">Loading…</p>
-                    <p v-else-if="tabError" role="alert" class="text-sm text-red-700 dark:text-red-300">{{ tabError }}</p>
+                <div v-else class="p-4">
+                    <SkeletonRows v-if="tabLoading" :rows="6" :columns="activeTab === 'stats' ? 2 : 4" />
+                    <div v-else-if="tabError" role="alert" class="dbx-callout dbx-callout-danger"><BaseIcon name="alert-circle" />{{ tabError }}</div>
 
-                    <table v-else-if="activeTab === 'structure' && columns" class="dbx-table">
-                        <thead>
-                            <tr><th>#</th><th>Column</th><th>Type</th><th>Nullable</th><th>Default</th><th>Comment</th></tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="column in columns" :key="column.name">
-                                <td class="text-zinc-400 tabular-nums">{{ column.position }}</td>
-                                <td class="font-medium">{{ column.name }}</td>
-                                <td class="font-mono text-xs">
-                                    {{ column.type }}<span v-if="column.collation" class="text-zinc-400"> collate {{ column.collation }}</span>
-                                </td>
-                                <td>{{ column.nullable ? 'yes' : 'not null' }}</td>
-                                <td class="font-mono text-xs">
-                                    <template v-if="column.identity">identity ({{ column.identity.replace('_', ' ') }})</template>
-                                    <template v-else-if="column.generated">generated: {{ column.generated }}</template>
-                                    <template v-else>{{ column.default ?? '' }}</template>
-                                </td>
-                                <td class="text-zinc-500">{{ column.comment ?? '' }}</td>
-                            </tr>
-                        </tbody>
-                    </table>
-
-                    <template v-else-if="activeTab === 'indexes' && indexes">
-                        <p v-if="indexes.length === 0" class="text-sm text-zinc-500">No indexes.</p>
-                        <table v-else class="dbx-table">
-                            <thead><tr><th>Name</th><th>Method</th><th>Flags</th><th>Definition</th></tr></thead>
+                    <div v-else-if="activeTab === 'structure' && columns" class="dbx-card overflow-x-auto">
+                        <table class="dbx-table">
+                            <thead>
+                                <tr><th class="w-px text-right">#</th><th>Column</th><th>Type</th><th>Null</th><th>Default</th><th>Comment</th></tr>
+                            </thead>
                             <tbody>
-                                <tr v-for="index in indexes" :key="index.name">
-                                    <td class="font-medium">{{ index.name }}</td>
-                                    <td>{{ index.method }}</td>
-                                    <td class="space-x-1 whitespace-nowrap">
-                                        <span v-if="index.primary" class="dbx-badge">primary</span>
-                                        <span v-else-if="index.unique" class="dbx-badge">unique</span>
-                                        <span v-if="!index.valid" class="dbx-badge text-red-700 dark:text-red-300">invalid</span>
+                                <tr v-for="column in columns" :key="column.name">
+                                    <td class="text-right text-xs text-fg-subtle tabular-nums">{{ column.position }}</td>
+                                    <td class="font-medium">{{ column.name }}</td>
+                                    <td class="font-mono text-xs whitespace-nowrap text-fg-muted">
+                                        {{ column.type }}<span v-if="column.collation" class="text-fg-subtle"> collate {{ column.collation }}</span>
                                     </td>
-                                    <td class="font-mono text-xs">{{ index.definition }}</td>
+                                    <td>
+                                        <span v-if="column.nullable" class="text-xs text-fg-subtle">nullable</span>
+                                        <BaseBadge v-else>not null</BaseBadge>
+                                    </td>
+                                    <td class="font-mono text-xs text-fg-muted">
+                                        <template v-if="column.identity">identity ({{ column.identity.replace('_', ' ') }})</template>
+                                        <template v-else-if="column.generated">generated: {{ column.generated }}</template>
+                                        <template v-else>{{ column.default ?? '' }}</template>
+                                    </td>
+                                    <td class="text-fg-muted">{{ column.comment ?? '' }}</td>
                                 </tr>
                             </tbody>
                         </table>
+                    </div>
+
+                    <template v-else-if="activeTab === 'indexes' && indexes">
+                        <EmptyState v-if="indexes.length === 0" icon="key" title="No indexes">Every query on this table scans it sequentially.</EmptyState>
+                        <div v-else class="dbx-card overflow-x-auto">
+                            <table class="dbx-table">
+                                <thead><tr><th>Name</th><th>Method</th><th>Flags</th><th>Definition</th></tr></thead>
+                                <tbody>
+                                    <tr v-for="index in indexes" :key="index.name">
+                                        <td class="font-medium">{{ index.name }}</td>
+                                        <td class="text-fg-muted">{{ index.method }}</td>
+                                        <td class="whitespace-nowrap">
+                                            <span class="inline-flex gap-1">
+                                                <BaseBadge v-if="index.primary" tone="accent" icon="key">primary</BaseBadge>
+                                                <BaseBadge v-else-if="index.unique">unique</BaseBadge>
+                                                <BaseBadge v-if="!index.valid" tone="danger" icon="alert">invalid</BaseBadge>
+                                            </span>
+                                        </td>
+                                        <td class="font-mono text-xs text-fg-muted">{{ index.definition }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </template>
 
                     <template v-else-if="activeTab === 'constraints' && constraints">
-                        <p v-if="constraints.length === 0" class="text-sm text-zinc-500">No constraints.</p>
-                        <table v-else class="dbx-table">
-                            <thead><tr><th>Name</th><th>Type</th><th>Columns</th><th>References</th><th>Definition</th></tr></thead>
-                            <tbody>
-                                <tr v-for="constraint in constraints" :key="constraint.name">
-                                    <td class="font-medium">{{ constraint.name }}</td>
-                                    <td class="whitespace-nowrap">{{ constraintLabel[constraint.type] }}</td>
-                                    <td>{{ constraint.columns.join(', ') }}</td>
-                                    <td>
-                                        <router-link v-if="constraint.references" :to="relationRoute(constraint.references)" class="dbx-link">
-                                            {{ constraint.references.schema }}.{{ constraint.references.table }} ({{ constraint.references.columns.join(', ') }})
-                                        </router-link>
-                                        <span v-else-if="constraint.type === 'foreign_key'" class="text-zinc-500" title="The referenced table is hidden">&lt;hidden&gt;</span>
-                                    </td>
-                                    <td class="font-mono text-xs">{{ constraint.definition }}</td>
-                                </tr>
-                            </tbody>
-                        </table>
+                        <EmptyState v-if="constraints.length === 0" icon="key" title="No constraints" />
+                        <div v-else class="dbx-card overflow-x-auto">
+                            <table class="dbx-table">
+                                <thead><tr><th>Name</th><th>Type</th><th>Columns</th><th>References</th><th>Definition</th></tr></thead>
+                                <tbody>
+                                    <tr v-for="constraint in constraints" :key="constraint.name">
+                                        <td class="font-medium">{{ constraint.name }}</td>
+                                        <td><BaseBadge :tone="constraint.type === 'primary_key' ? 'accent' : 'neutral'" :icon="constraint.type === 'primary_key' ? 'key' : undefined">{{ constraintLabel[constraint.type] }}</BaseBadge></td>
+                                        <td class="font-mono text-xs">{{ constraint.columns.join(', ') }}</td>
+                                        <td>
+                                            <router-link v-if="constraint.references" :to="relationRoute(constraint.references)" class="dbx-link inline-flex items-center gap-1 font-mono text-xs whitespace-nowrap">
+                                                {{ constraint.references.schema }}.{{ constraint.references.table }} ({{ constraint.references.columns.join(', ') }})<BaseIcon name="arrow-right" :size="12" />
+                                            </router-link>
+                                            <span v-else-if="constraint.type === 'foreign_key'" class="inline-flex items-center gap-1 text-xs text-fg-subtle" title="The referenced table is hidden"><BaseIcon name="lock" :size="12" />hidden table</span>
+                                        </td>
+                                        <td class="font-mono text-xs text-fg-muted">{{ constraint.definition }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </template>
 
                     <template v-else-if="activeTab === 'triggers' && triggers">
-                        <p v-if="triggers.length === 0" class="text-sm text-zinc-500">No triggers.</p>
-                        <table v-else class="dbx-table">
-                            <thead><tr><th>Name</th><th>Function</th><th>Enabled</th><th>Definition</th></tr></thead>
-                            <tbody>
-                                <tr v-for="trigger in triggers" :key="trigger.name">
-                                    <td class="font-medium">{{ trigger.name }}</td>
-                                    <td class="font-mono text-xs">{{ trigger.function }}</td>
-                                    <td>{{ trigger.enabled ? 'yes' : 'disabled' }}</td>
-                                    <td class="font-mono text-xs">{{ trigger.definition }}</td>
-                                </tr>
-                            </tbody>
-                        </table>
+                        <EmptyState v-if="triggers.length === 0" icon="function" title="No triggers" />
+                        <div v-else class="dbx-card overflow-x-auto">
+                            <table class="dbx-table">
+                                <thead><tr><th>Name</th><th>Function</th><th>State</th><th>Definition</th></tr></thead>
+                                <tbody>
+                                    <tr v-for="trigger in triggers" :key="trigger.name">
+                                        <td class="font-medium">{{ trigger.name }}</td>
+                                        <td class="font-mono text-xs">{{ trigger.function }}</td>
+                                        <td><BaseBadge :tone="trigger.enabled ? 'success' : 'neutral'" :icon="trigger.enabled ? 'check' : 'ban'">{{ trigger.enabled ? 'enabled' : 'disabled' }}</BaseBadge></td>
+                                        <td class="font-mono text-xs text-fg-muted">{{ trigger.definition }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </template>
 
                     <CodeBlock v-else-if="activeTab === 'ddl' && ddl !== undefined" :code="ddl" copy-label="Copy DDL" />
 
-                    <dl v-else-if="activeTab === 'stats' && stats" class="grid max-w-2xl grid-cols-[max-content_1fr] gap-x-6 gap-y-1.5 text-sm">
-                        <dt class="text-zinc-500">Total size</dt><dd>{{ formatBytes(stats.total_bytes) }}</dd>
-                        <dt class="text-zinc-500">Table size</dt><dd>{{ formatBytes(stats.table_bytes) }}</dd>
-                        <dt class="text-zinc-500">Index size</dt><dd>{{ formatBytes(stats.index_bytes) }}</dd>
-                        <dt class="text-zinc-500">Estimated rows</dt><dd class="tabular-nums">{{ formatNumber(stats.estimated_rows) }}</dd>
-                        <dt class="text-zinc-500">Live / dead rows</dt><dd class="tabular-nums">{{ formatNumber(stats.live_rows) }} / {{ formatNumber(stats.dead_rows) }}</dd>
-                        <dt class="text-zinc-500">Sequential scans</dt><dd class="tabular-nums">{{ formatNumber(stats.seq_scans) }}</dd>
-                        <dt class="text-zinc-500">Index scans</dt><dd class="tabular-nums">{{ formatNumber(stats.index_scans) }}</dd>
-                        <dt class="text-zinc-500">Last vacuum</dt><dd>{{ formatDate(stats.last_vacuum) }} <span class="text-zinc-400">(auto: {{ formatDate(stats.last_autovacuum) }})</span></dd>
-                        <dt class="text-zinc-500">Last analyze</dt><dd>{{ formatDate(stats.last_analyze) }} <span class="text-zinc-400">(auto: {{ formatDate(stats.last_autoanalyze) }})</span></dd>
+                    <dl v-else-if="activeTab === 'stats' && stats" class="dbx-kv">
+                        <dt>Total size</dt><dd>{{ formatBytes(stats.total_bytes) }}</dd>
+                        <dt>Table size</dt><dd>{{ formatBytes(stats.table_bytes) }}</dd>
+                        <dt>Index size</dt><dd>{{ formatBytes(stats.index_bytes) }}</dd>
+                        <dt>Estimated rows</dt><dd>{{ formatNumber(stats.estimated_rows) }}</dd>
+                        <dt>Live / dead rows</dt><dd>{{ formatNumber(stats.live_rows) }} / {{ formatNumber(stats.dead_rows) }}</dd>
+                        <dt>Sequential scans</dt><dd>{{ formatNumber(stats.seq_scans) }}</dd>
+                        <dt>Index scans</dt><dd>{{ formatNumber(stats.index_scans) }}</dd>
+                        <dt>Last vacuum</dt><dd>{{ formatDate(stats.last_vacuum) }} <span class="text-fg-subtle">· auto {{ formatDate(stats.last_autovacuum) }}</span></dd>
+                        <dt>Last analyze</dt><dd>{{ formatDate(stats.last_analyze) }} <span class="text-fg-subtle">· auto {{ formatDate(stats.last_autoanalyze) }}</span></dd>
                     </dl>
 
                     <template v-else-if="activeTab === 'definition' && fn">
-                        <dl class="mb-4 grid max-w-2xl grid-cols-[max-content_1fr] gap-x-6 gap-y-1.5 text-sm">
-                            <dt class="text-zinc-500">Signature</dt><dd class="font-mono text-xs">{{ fn.signature }}</dd>
-                            <dt class="text-zinc-500">Arguments</dt><dd class="font-mono text-xs">{{ fn.arguments || '—' }}</dd>
-                            <template v-if="fn.returns !== null"><dt class="text-zinc-500">Returns</dt><dd class="font-mono text-xs">{{ fn.returns }}</dd></template>
-                            <dt class="text-zinc-500">Language</dt><dd>{{ fn.language }}</dd>
-                            <dt class="text-zinc-500">Volatility</dt><dd>{{ fn.volatility }}</dd>
-                            <dt class="text-zinc-500">Security</dt><dd>{{ fn.security_definer ? 'definer' : 'invoker' }}</dd>
+                        <dl class="dbx-kv mb-4">
+                            <dt>Signature</dt><dd class="font-mono text-data">{{ fn.signature }}</dd>
+                            <dt>Arguments</dt><dd class="font-mono text-data">{{ fn.arguments || '—' }}</dd>
+                            <template v-if="fn.returns !== null"><dt>Returns</dt><dd class="font-mono text-data">{{ fn.returns }}</dd></template>
+                            <dt>Language</dt><dd>{{ fn.language }}</dd>
+                            <dt>Volatility</dt><dd>{{ fn.volatility }}</dd>
+                            <dt>Security</dt><dd>{{ fn.security_definer ? 'definer' : 'invoker' }}</dd>
                         </dl>
                         <CodeBlock :code="fn.definition" />
                     </template>
 
                     <CodeBlock v-else-if="activeTab === 'definition' && definition !== undefined" :code="definition" />
 
-                    <dl v-else-if="activeTab === 'overview' && object" class="grid max-w-2xl grid-cols-[max-content_1fr] gap-x-6 gap-y-1.5 text-sm">
-                        <dt class="text-zinc-500">Schema</dt><dd>{{ object.schema }}</dd>
-                        <dt class="text-zinc-500">Name</dt><dd>{{ object.name }}</dd>
-                        <dt class="text-zinc-500">Type</dt><dd>{{ typeLabel }}</dd>
-                        <dt class="text-zinc-500">Comment</dt><dd>{{ object.comment ?? '—' }}</dd>
+                    <dl v-else-if="activeTab === 'overview' && object" class="dbx-kv">
+                        <dt>Schema</dt><dd>{{ object.schema }}</dd>
+                        <dt>Name</dt><dd>{{ object.name }}</dd>
+                        <dt>Type</dt><dd>{{ typeLabel }}</dd>
+                        <dt>Comment</dt><dd>{{ object.comment ?? '—' }}</dd>
                     </dl>
-                </template>
+                </div>
             </section>
         </template>
 
@@ -380,14 +488,7 @@ watch(activeTab, () => void loadTab());
             :label="label"
             :schema="schema"
             :name="name"
-            @close="
-                (changed: boolean) => {
-                    ddlOpen = false;
-                    if (changed) {
-                        void loadObject();
-                    }
-                }
-            "
+            @close="onDdlClose"
         />
     </div>
 </template>

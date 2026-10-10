@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue';
 import { api, describeError, segment } from '../api';
 import type { DdlPreview } from '../types';
 import CodeBlock from './CodeBlock.vue';
+import BaseIcon from './BaseIcon.vue';
 import ModalDialog from './ModalDialog.vue';
 
 /**
@@ -18,9 +19,19 @@ const props = defineProps<{
     name: string;
 }>();
 
-const emit = defineEmits<{ close: [changed: boolean] }>();
+/** What a successful execute did, for the page behind the dialog (F25a, F25b). */
+export interface DdlOutcome {
+    op: Op;
+    title: string;
+    /** Set when CONCURRENTLY queued it as a background run instead. */
+    run?: number;
+    /** The new name, for rename_table. */
+    to?: string;
+}
 
-type Op = 'add_column' | 'drop_column' | 'rename_column' | 'create_index' | 'drop_index' | 'rename_table' | 'comment_table' | 'drop_table';
+const emit = defineEmits<{ close: [outcome: DdlOutcome | null] }>();
+
+export type Op = 'add_column' | 'drop_column' | 'rename_column' | 'create_index' | 'drop_index' | 'rename_table' | 'comment_table' | 'drop_table';
 
 const OPS: { op: Op; title: string; destructive?: boolean; note: string }[] = [
     { op: 'add_column', title: 'Add column', note: 'Name and PostgreSQL type; the server validates the type against the database.' },
@@ -50,7 +61,6 @@ const cascade = ref(false);
 const preview = ref<DdlPreview | null>(null);
 const error = ref<string | null>(null);
 const busy = ref(false);
-const queued = ref<number | null>(null);
 
 const meta = computed(() => OPS.find((entry) => entry.op === op.value));
 
@@ -58,7 +68,27 @@ watch([() => props.open, op], () => {
     if (props.open) {
         error.value = null;
         preview.value = null;
-        queued.value = null;
+    }
+});
+
+// Execute sends the form as it is now: an edit after Preview must be previewed again.
+watch([columnName, columnType, columnNullable, columnDefault, columnTo, indexName, indexColumns, indexUnique, indexConcurrent, tableTo, tableComment, cascade], () => {
+    preview.value = null;
+});
+
+/** Plain words for what a destructive operation loses, shown before Execute. */
+const consequence = computed(() => {
+    const target = `${props.schema}.${props.name}`;
+
+    switch (op.value) {
+        case 'drop_column':
+            return `Dropping column ${columnName.value.trim() || '…'} deletes its values in every row of ${target}.`;
+        case 'drop_index':
+            return `Dropping index ${indexName.value.trim() || '…'} can make queries that relied on it slower.`;
+        case 'drop_table':
+            return `Dropping ${target} deletes the table and all of its rows${cascade.value ? ', and CASCADE also drops everything that depends on it (views, foreign keys)' : ''}.`;
+        default:
+            return null;
     }
 });
 
@@ -89,7 +119,6 @@ function operation(): Record<string, unknown> {
 async function build(): Promise<void> {
     error.value = null;
     preview.value = null;
-    queued.value = null;
     busy.value = true;
 
     try {
@@ -114,12 +143,12 @@ async function execute(): Promise<void> {
         const response = await api<{ data: { run?: { id: number } } }>(`${segment(props.label)}/ddl/execute`, { method: 'POST', body: { op: operation() } });
 
         // CONCURRENTLY: queued as a background run instead of executed.
-        if (response.data.run) {
-            queued.value = response.data.run.id;
-            emit('close', true);
-        } else {
-            emit('close', true);
-        }
+        emit('close', {
+            op: op.value,
+            title: meta.value?.title ?? op.value,
+            run: response.data.run?.id,
+            to: op.value === 'rename_table' ? tableTo.value.trim() : undefined,
+        });
     } catch (e) {
         error.value = describeError(e);
     } finally {
@@ -129,68 +158,100 @@ async function execute(): Promise<void> {
 </script>
 
 <template>
-    <ModalDialog :open="open" :title="`Alter ${schema}.${name}`" wide @close="emit('close', false)">
-        <form class="space-y-3" @submit.prevent="build">
-            <p v-if="error" role="alert" class="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">{{ error }}</p>
-            <p v-if="queued" role="status" class="rounded border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-200">
-                Queued as background run #{{ queued }}: CONCURRENTLY can't run in a transaction.
-            </p>
-
-            <div class="flex flex-wrap gap-1" role="group" aria-label="Operation">
+    <ModalDialog
+        :open="open"
+        :title="`Alter ${schema}.${name}`"
+        description="Pick a change, review the SQL it generates, then run it. Nothing runs until you press the final button."
+        wide
+        @close="emit('close', null)"
+    >
+        <form class="space-y-4" @submit.prevent="build">
+            <div class="flex flex-wrap items-center gap-1" role="group" aria-label="Operation">
                 <button
-                    v-for="entry in OPS"
+                    v-for="entry in OPS.filter((item) => !item.destructive)"
                     :key="entry.op"
                     type="button"
-                    class="dbx-btn"
-                    :class="entry.op === op ? 'dbx-btn-primary' : ''"
+                    class="dbx-btn dbx-btn-sm"
+                    :class="entry.op === op ? 'dbx-btn-pressed' : ''"
                     :aria-pressed="entry.op === op"
                     @click="op = entry.op"
                 >
                     {{ entry.title }}
                 </button>
+                <span class="dbx-separator mx-1" aria-hidden="true" />
+                <button
+                    v-for="entry in OPS.filter((item) => item.destructive)"
+                    :key="entry.op"
+                    type="button"
+                    class="dbx-btn dbx-btn-sm"
+                    :class="entry.op === op ? 'border-danger-line bg-danger-bg text-danger-fg' : 'dbx-btn-danger-ghost'"
+                    :aria-pressed="entry.op === op"
+                    @click="op = entry.op"
+                >
+                    <BaseIcon name="trash" />{{ entry.title }}
+                </button>
             </div>
 
-            <p class="text-xs text-zinc-500 dark:text-zinc-400">{{ meta?.note }}</p>
+            <p class="text-sm text-fg-muted">{{ meta?.note }}</p>
 
-            <div v-if="op === 'add_column'" class="grid grid-cols-2 gap-2">
-                <label class="text-sm">Column name <input v-model="columnName" class="dbx-input font-mono" required></label>
-                <label class="text-sm">Type <input v-model="columnType" class="dbx-input font-mono" placeholder="e.g. varchar(80)" required></label>
-                <label class="flex items-center gap-2 text-sm"><input v-model="columnNullable" type="checkbox"> nullable</label>
-                <label class="text-sm">Default <input v-model="columnDefault" class="dbx-input font-mono" placeholder="optional, e.g. now()"></label>
+            <div v-if="op === 'add_column'" class="grid grid-cols-2 gap-3">
+                <label><span class="dbx-label">Column name</span><input v-model="columnName" class="dbx-input w-full font-mono" required></label>
+                <label><span class="dbx-label">Type</span><input v-model="columnType" class="dbx-input w-full font-mono" placeholder="e.g. varchar(80)" required></label>
+                <label><span class="dbx-label">Default</span><input v-model="columnDefault" class="dbx-input w-full font-mono" placeholder="optional, e.g. now()"></label>
+                <label class="dbx-check self-end pb-1"><input v-model="columnNullable" type="checkbox"> Nullable</label>
             </div>
 
-            <div v-else-if="op === 'drop_column' || op === 'rename_column'" class="grid grid-cols-2 gap-2">
-                <label class="text-sm">Column <input v-model="columnName" class="dbx-input font-mono" required></label>
-                <label v-if="op === 'rename_column'" class="text-sm">New name <input v-model="columnTo" class="dbx-input font-mono" required></label>
+            <div v-else-if="op === 'drop_column' || op === 'rename_column'" class="grid grid-cols-2 gap-3">
+                <label><span class="dbx-label">Column</span><input v-model="columnName" class="dbx-input w-full font-mono" required></label>
+                <label v-if="op === 'rename_column'"><span class="dbx-label">New name</span><input v-model="columnTo" class="dbx-input w-full font-mono" required></label>
             </div>
 
-            <div v-else-if="op === 'create_index' || op === 'drop_index'" class="grid grid-cols-2 gap-2">
-                <label class="text-sm">Index name <input v-model="indexName" class="dbx-input font-mono" required></label>
-                <label v-if="op === 'create_index'" class="text-sm">Columns <input v-model="indexColumns" class="dbx-input font-mono" placeholder="col1, col2" required></label>
-                <label v-if="op === 'create_index'" class="flex items-center gap-2 text-sm"><input v-model="indexUnique" type="checkbox"> unique</label>
-                <label class="flex items-center gap-2 text-sm" title="Builds or drops outside a transaction, as a background run"><input v-model="indexConcurrent" type="checkbox"> concurrently</label>
+            <div v-else-if="op === 'create_index' || op === 'drop_index'" class="grid grid-cols-2 gap-3">
+                <label><span class="dbx-label">Index name</span><input v-model="indexName" class="dbx-input w-full font-mono" required></label>
+                <label v-if="op === 'create_index'"><span class="dbx-label">Columns</span><input v-model="indexColumns" class="dbx-input w-full font-mono" placeholder="col1, col2" required></label>
+                <div class="col-span-2 flex flex-wrap gap-4">
+                    <label v-if="op === 'create_index'" class="dbx-check"><input v-model="indexUnique" type="checkbox"> Unique</label>
+                    <label class="dbx-check" title="Builds or drops outside a transaction, as a background run"><input v-model="indexConcurrent" type="checkbox"> Concurrently <span class="text-fg-subtle">(runs in the background)</span></label>
+                </div>
             </div>
 
-            <div v-else-if="op === 'rename_table'" class="grid grid-cols-2 gap-2">
-                <label class="text-sm">New name <input v-model="tableTo" class="dbx-input font-mono" required></label>
+            <div v-else-if="op === 'rename_table'" class="grid grid-cols-2 gap-3">
+                <label><span class="dbx-label">New name</span><input v-model="tableTo" class="dbx-input w-full font-mono" required></label>
             </div>
 
-            <div v-else-if="op === 'comment_table'" class="grid grid-cols-1 gap-2">
-                <label class="text-sm">Comment <input v-model="tableComment" class="dbx-input"></label>
+            <div v-else-if="op === 'comment_table'">
+                <label><span class="dbx-label">Comment</span><input v-model="tableComment" class="dbx-input w-full"></label>
             </div>
 
-            <div v-else class="grid grid-cols-2 gap-2">
-                <label class="flex items-center gap-2 text-sm"><input v-model="cascade" type="checkbox"> cascade</label>
+            <div v-else>
+                <label class="dbx-check"><input v-model="cascade" type="checkbox"> Cascade <span class="text-fg-subtle">(also drop dependent objects)</span></label>
             </div>
 
-            <CodeBlock v-if="preview" :code="preview.statements.map((statement) => statement.sql).join(';\n')" copy-label="Copy as SQL" />
-            <CodeBlock v-if="preview?.migration" :code="preview.migration" copy-label="Copy as Laravel migration" />
+            <div v-if="error" role="alert" class="dbx-callout dbx-callout-danger"><BaseIcon name="alert-circle" /><span>{{ error }}</span></div>
 
-            <div class="flex justify-end gap-2 pt-2">
-                <button type="button" class="dbx-btn" @click="emit('close', false)">Close</button>
-                <button type="submit" class="dbx-btn" :disabled="busy">{{ busy ? 'Working…' : 'Preview SQL' }}</button>
+            <template v-if="preview">
+                <div>
+                    <p class="dbx-label">SQL</p>
+                    <CodeBlock :code="preview.statements.map((statement) => statement.sql).join(';\n')" copy-label="Copy SQL" />
+                </div>
+                <div v-if="preview.migration">
+                    <p class="dbx-label">Laravel migration</p>
+                    <CodeBlock :code="preview.migration" copy-label="Copy migration" />
+                </div>
+                <div v-if="meta?.destructive && consequence" class="dbx-callout dbx-callout-danger">
+                    <BaseIcon name="alert" />
+                    <span>{{ consequence }} This can't be undone from DbExplorer. You'll be asked for your password.</span>
+                </div>
+            </template>
+
+            <div class="flex items-center justify-end gap-2 border-t border-line pt-4">
+                <button type="button" class="dbx-btn dbx-btn-ghost mr-auto" @click="emit('close', null)">Cancel</button>
+                <button type="submit" class="dbx-btn" :class="preview ? '' : 'dbx-btn-primary'" :disabled="busy">
+                    <span v-if="busy && !preview" class="dbx-spinner" aria-hidden="true" />{{ preview ? 'Refresh preview' : 'Preview SQL' }}
+                </button>
                 <button v-if="preview" type="button" class="dbx-btn" :class="meta?.destructive ? 'dbx-btn-danger' : 'dbx-btn-primary'" :disabled="busy" @click="execute">
-                    Execute {{ meta?.destructive ? '(asks for password)' : '' }}
+                    <span v-if="busy" class="dbx-spinner border-white/40 border-t-white" aria-hidden="true" />
+                    <BaseIcon v-else :name="meta?.destructive ? 'trash' : 'play'" />{{ meta?.destructive ? meta.title : 'Run' }}
                 </button>
             </div>
         </form>
