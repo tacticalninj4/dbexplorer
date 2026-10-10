@@ -12,6 +12,7 @@ use TacticalNinj4\DbExplorer\Facades\DbExplorer;
 use TacticalNinj4\DbExplorer\Jobs\Backup;
 use TacticalNinj4\DbExplorer\Models\Run;
 use TacticalNinj4\DbExplorer\Models\RunStatus;
+use TacticalNinj4\DbExplorer\Tests\PgsqlFixture;
 use TacticalNinj4\DbExplorer\Tests\PgsqlTestCase;
 
 // M4.3, S20: pg_dump through Symfony Process, preflight, retention, and a
@@ -162,6 +163,124 @@ it('backs the database up through the job, downloads through the run, and retain
 
         expect($list->isSuccessful())->toBeTrue($list->getErrorOutput())
             ->and($list->getOutput())->toContain('TABLE')->toContain('users');
+    }
+})->skip(DB_DUMP_PATH === '', 'pg_dump not found in PATH');
+
+/**
+ * The pg_restore that pairs with DB_DUMP_PATH: the docker wrapper's
+ * counterpart, or the pg_restore next to pg_dump. Null when there is none.
+ */
+function pairedPgRestore(): ?string
+{
+    if (basename(DB_DUMP_PATH) === 'docker-pgdump.sh') {
+        return dirname(DB_DUMP_PATH).'/docker-pgrestore.sh';
+    }
+
+    return (new BackupTool(DB::connection('pgsql_admin'), DB_DUMP_PATH))->restorePath();
+}
+
+/**
+ * Row count and an md5 of the ordered contents of each scratch table, on $connection.
+ *
+ * @return array<string, array{0: int, 1: string}>
+ */
+function backupFingerprint(string $connection, string $schema): array
+{
+    $tables = [];
+
+    foreach (['teams', 'members'] as $table) {
+        $row = DB::connection($connection)->selectOne(
+            "SELECT count(*) AS n, md5(coalesce(string_agg(t::text, '|' ORDER BY t.id), '')) AS digest FROM {$schema}.{$table} t",
+        );
+
+        $tables[$table] = [(int) $row->n, (string) $row->digest];
+    }
+
+    return $tables;
+}
+
+it('round-trips a backup: the dump restores with pg_restore into a fresh database with the same rows', function () {
+    config(['dbexplorer.backup.pg_dump_path' => DB_DUMP_PATH]);
+
+    $problem = (new BackupTool(DB::connection('pgsql_admin'), DB_DUMP_PATH))->preflight();
+
+    if ($problem !== null) {
+        $this->markTestSkipped("no pg_dump that can dump this server: {$problem}");
+    }
+
+    $restore = pairedPgRestore();
+
+    if ($restore === null || ! is_executable($restore)) {
+        $this->markTestSkipped('no pg_restore next to '.DB_DUMP_PATH);
+    }
+
+    $schema = $this->scratchSchema();
+
+    DB::connection('pgsql_admin')->unprepared(<<<SQL
+        CREATE TABLE {$schema}.teams (id serial PRIMARY KEY, name text NOT NULL UNIQUE);
+        CREATE TABLE {$schema}.members (
+            id bigserial PRIMARY KEY,
+            team_id int NOT NULL REFERENCES {$schema}.teams (id),
+            email text NOT NULL,
+            profile jsonb,
+            joined timestamptz NOT NULL DEFAULT now()
+        );
+        INSERT INTO {$schema}.teams (name) SELECT 'team ' || g FROM generate_series(1, 7) g;
+        INSERT INTO {$schema}.members (team_id, email, profile)
+            SELECT 1 + g % 7, 'user' || g || '@example.com', jsonb_build_object('n', g, 'note', E'tab\\there, quote '' and backslash \\\\')
+            FROM generate_series(1, 2500) g;
+        CREATE VIEW {$schema}.team_sizes AS SELECT team_id, count(*) AS members FROM {$schema}.members GROUP BY team_id;
+        SQL);
+
+    DbExplorer::roleUsing(fn (): string => 'admin');
+
+    $run = Run::query()->create([
+        'type' => Backup::TYPE,
+        'user_id' => '1',
+        'label' => 'main',
+        'role' => 'admin',
+        'meta' => [Run::USER_PROVIDER => 'users', 'schemas' => [$schema]],
+    ]);
+
+    app()->call([new Backup($run->id), 'handle']);
+
+    expect($run->refresh()->status)->toBe(RunStatus::SUCCEEDED, (string) $run->error);
+
+    $database = 'dbx_restore_'.bin2hex(random_bytes(5));
+    $super = DB::connection('pgsql_super')->getConfig();
+
+    DB::connection('pgsql_super')->statement("CREATE DATABASE {$database}");
+
+    try {
+        // The documented restore (docs/security.md §7), into a database of our choosing.
+        $process = new Process([
+            $restore,
+            '--host', (string) $super['host'],
+            '--port', (string) $super['port'],
+            '--username', (string) $super['username'],
+            '--dbname', $database,
+            '--no-owner',
+            '--no-privileges',
+            '--exit-on-error',
+            Storage::disk('local')->path((string) $run->result_path),
+        ], null, ['PGPASSWORD' => (string) $super['password']], null, 120.0);
+        $process->run();
+
+        expect($process->isSuccessful())->toBeTrue('pg_restore failed: '.$process->getErrorOutput());
+
+        config(['database.connections.pgsql_restored' => PgsqlFixture::connection($database)]);
+
+        $original = backupFingerprint('pgsql_admin', $schema);
+        $restored = DB::connection('pgsql_restored');
+
+        expect([$original['teams'][0], $original['members'][0]])->toBe([7, 2500])
+            ->and(backupFingerprint('pgsql_restored', $schema))->toBe($original)
+            ->and((int) $restored->selectOne("SELECT sum(members) AS n FROM {$schema}.team_sizes")->n)->toBe(2500)
+            // Sequences come back at their values, so new rows don't collide.
+            ->and((int) $restored->selectOne("SELECT nextval('{$schema}.members_id_seq') AS id")->id)->toBe(2501);
+    } finally {
+        DB::disconnect('pgsql_restored');
+        DB::connection('pgsql_super')->statement("DROP DATABASE IF EXISTS {$database}");
     }
 })->skip(DB_DUMP_PATH === '', 'pg_dump not found in PATH');
 
