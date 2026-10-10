@@ -4,7 +4,7 @@
 |---|---|
 | Verified commit | `2c53133` (main, 2026-10-10) |
 | Sources | Release verifier (test matrix, traceability, docs), independent security audit, end-to-end browser test |
-| Status | 23 fixes **applied** (batches 1–3) · 2 **not started** (batch 4: F24, F25) |
+| Status | 23 fixes **applied** (batches 1–3) + F25a/b/e (UI polish) · **open:** F24 (missing screens), F25c (decided: explicit overwrite), F25d |
 
 ## How to read this
 
@@ -447,14 +447,14 @@ The full Laravel 9–13 matrix last ran at `4183940`, and batch 3 adds only test
 - **Most of the product's value is unreachable without screens.** A phpMyAdmin replacement isn't one if exports, imports, backups and sessions need curl.
 - **Building after batches 1–3 means the screens target the corrected API.** That's the fixed schedule flow and the import error fields.
 
-### F25 — LOW — Smaller UI and API issues · NOT STARTED
+### F25 — LOW — Smaller UI and API issues · PARTLY APPLIED (a, b, e in the UI polish, `ui-polish` → `main`)
 | # | Issue | Proposed fix | Reasoning |
 |---|---|---|---|
-| a | The DDL form's "Queued as run #N" notice never appears, because the dialog closes first | Show it as a toast or banner that outlives the dialog, linking to the run | The user otherwise doesn't know a background job started (`CONCURRENTLY`) |
-| b | After dropping a table, the page stays on the 404 and the tree still lists the table | After a successful DDL execute, invalidate the tree cache and navigate to the schema | Stale navigation makes a successful drop look failed |
-| c | After a save conflict, the only option is "reload" | Add "overwrite with mine", which re-issues the update using the current row as the new `original` | Clobbering is legitimate when it's a deliberate choice. The 409 stays the default safety net. |
+| a ✅ | The DDL form's "Queued as run #N" notice never appears, because the dialog closes first | Show it as a toast or banner that outlives the dialog, linking to the run | The user otherwise doesn't know a background job started (`CONCURRENTLY`) |
+| b ✅ | After dropping a table, the page stays on the 404 and the tree still lists the table | After a successful DDL execute, invalidate the tree cache and navigate to the schema | Stale navigation makes a successful drop look failed |
+| c | After a save conflict, the only option is "reload" | **Decided (2026-10-11): yes, explicit and audited.** Show a diff of your values against the current row, plus an "Overwrite with mine" button that re-issues the update with the current row as the new `original`. It's still conflict-checked. | Clobbering is legitimate when it's a deliberate choice. The 409 stays the default safety net. |
 | d | `POST rows` with no values inserts a row of defaults (201) | Require at least one value or an explicit `defaults: true` (422 otherwise) | Inserting an all-defaults row by accident, for example from an empty form, is a surprising write |
-| e | The editor shows "5 rows" for a `DELETE` with no result set | Show "N rows affected" for statements with no result set | Mixing up rows *returned* and rows *affected* is misleading after destructive SQL |
+| e ✅ | The editor shows "5 rows" for a `DELETE` with no result set | Show "N rows affected" for statements with no result set | Mixing up rows *returned* and rows *affected* is misleading after destructive SQL |
 
 ---
 
