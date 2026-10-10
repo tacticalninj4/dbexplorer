@@ -2,6 +2,10 @@
 import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api, describeError, segment } from '../api';
+import ClassificationBadge from '../components/ClassificationBadge.vue';
+import EmptyState from '../components/EmptyState.vue';
+import BaseIcon from '../components/BaseIcon.vue';
+import SkeletonRows from '../components/SkeletonRows.vue';
 import { sendToEditor } from '../composables/editorInbox';
 import { formatDate, formatDuration, formatNumber } from '../composables/format';
 import type { HistoryPage } from '../types';
@@ -41,47 +45,56 @@ function goTo(next: number): void {
     void router.push({ query: { ...route.query, page: next > 1 ? String(next) : undefined } });
 }
 
-const outcomeClass = (outcome: string) =>
-    outcome === 'success' ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-300';
+const succeeded = (outcome: string) => outcome === 'success';
 </script>
 
 <template>
     <div class="flex min-h-0 flex-1 flex-col">
-        <header class="flex items-center gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+        <header class="dbx-page-header">
+            <BaseIcon name="history" class="text-fg-subtle" />
             <h1 class="text-lg font-semibold">Query history</h1>
-            <span class="text-sm text-zinc-500">Your queries on {{ label }}. Click one to open it in the editor.</span>
+            <span class="text-sm text-fg-muted">Your queries on {{ label }}, newest first. Pick one to open it in a new editor tab.</span>
         </header>
 
         <div class="min-h-0 flex-1 overflow-auto p-4">
-            <p v-if="error" role="alert" class="text-sm text-red-700 dark:text-red-300">{{ error }}</p>
-            <p v-else-if="loading && !history" class="text-sm text-zinc-500">Loading…</p>
-            <p v-else-if="history && history.data.length === 0" class="text-sm text-zinc-500">No queries yet.</p>
-            <ul v-else-if="history" class="space-y-2" :aria-busy="loading">
+            <div v-if="error" role="alert" class="dbx-callout dbx-callout-danger max-w-4xl"><BaseIcon name="alert-circle" />{{ error }}</div>
+            <div v-else-if="loading && !history" class="dbx-card max-w-4xl"><SkeletonRows :rows="5" :columns="2" /></div>
+            <EmptyState v-else-if="history && history.data.length === 0" icon="history" title="No queries yet">
+                Statements you run in the SQL editor appear here, with their outcome and duration.
+                <template #actions>
+                    <router-link :to="{ name: 'sql', params: { label } }" class="dbx-btn"><BaseIcon name="terminal" />Open SQL editor</router-link>
+                </template>
+            </EmptyState>
+            <ul v-else-if="history" class="dbx-card max-w-4xl divide-y divide-line-subtle overflow-hidden" :aria-busy="loading">
                 <li v-for="entry in history.data" :key="entry.id">
                     <button
                         type="button"
-                        class="block w-full rounded-md border border-zinc-200 bg-white p-3 text-left hover:border-sky-400 focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:outline-none dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-sky-700"
+                        class="group block w-full cursor-default px-3.5 py-2.5 text-left transition-colors duration-100 outline-offset-[-2px] hover:bg-hover"
+                        :title="'Open in the SQL editor'"
                         @click="open(entry.sql)"
                     >
-                        <span class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400">
-                            <span>{{ formatDate(entry.created_at) }}</span>
-                            <span class="dbx-badge">{{ entry.classification }}</span>
-                            <span :class="outcomeClass(entry.outcome)">{{ entry.outcome }}</span>
-                            <span>{{ formatDuration(entry.duration_ms) }}</span>
-                            <span v-if="entry.row_count !== null">{{ formatNumber(entry.row_count) }} {{ entry.row_count === 1 ? 'row' : 'rows' }}</span>
+                        <span class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-fg-muted">
+                            <span class="inline-flex items-center gap-1 font-medium" :class="succeeded(entry.outcome) ? 'text-success-fg' : 'text-danger-fg'">
+                                <BaseIcon :name="succeeded(entry.outcome) ? 'check-circle' : 'x-circle'" :size="12" />{{ entry.outcome }}
+                            </span>
+                            <ClassificationBadge :value="entry.classification" />
+                            <span class="tabular-nums">{{ formatDate(entry.created_at) }}</span>
+                            <span class="tabular-nums">{{ formatDuration(entry.duration_ms) }}</span>
+                            <span v-if="entry.row_count !== null" class="tabular-nums">{{ formatNumber(entry.row_count) }} {{ entry.row_count === 1 ? 'row' : 'rows' }}</span>
                             <span>as {{ entry.role }}</span>
+                            <span class="ml-auto inline-flex items-center gap-1 text-accent opacity-0 transition-opacity duration-100 group-hover:opacity-100 group-focus-visible:opacity-100">Open<BaseIcon name="arrow-right" :size="12" /></span>
                         </span>
-                        <span class="mt-1.5 line-clamp-4 block font-mono text-xs whitespace-pre-wrap text-zinc-800 dark:text-zinc-200">{{ entry.sql }}</span>
-                        <span v-if="entry.error" class="mt-1 block text-xs text-red-700 dark:text-red-300">{{ entry.error }}</span>
+                        <span class="mt-1.5 line-clamp-4 block font-mono text-xs whitespace-pre-wrap text-fg">{{ entry.sql }}</span>
+                        <span v-if="entry.error" class="mt-1.5 block font-mono text-xs text-danger-fg">{{ entry.error }}</span>
                     </button>
                 </li>
             </ul>
         </div>
 
-        <footer v-if="history && (page > 1 || history.meta.has_more)" class="flex items-center gap-2 border-t border-zinc-200 px-4 py-2 text-sm dark:border-zinc-800">
-            <button type="button" class="dbx-btn" :disabled="page <= 1 || loading" @click="goTo(page - 1)">← Newer</button>
-            <span class="text-zinc-500">Page {{ page }}</span>
-            <button type="button" class="dbx-btn" :disabled="!history.meta.has_more || loading" @click="goTo(page + 1)">Older →</button>
+        <footer v-if="history && (page > 1 || history.meta.has_more)" class="dbx-statusbar">
+            <button type="button" class="dbx-btn dbx-btn-ghost dbx-btn-sm" :disabled="page <= 1 || loading" @click="goTo(page - 1)"><BaseIcon name="chevron-left" />Newer</button>
+            <span>Page {{ page }}</span>
+            <button type="button" class="dbx-btn dbx-btn-ghost dbx-btn-sm" :disabled="!history.meta.has_more || loading" @click="goTo(page + 1)">Older<BaseIcon name="chevron-right" /></button>
         </footer>
     </div>
 </template>

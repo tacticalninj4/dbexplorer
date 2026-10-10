@@ -2,6 +2,12 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { api, describeError, segment } from '../api';
+import BaseBadge from '../components/BaseBadge.vue';
+import type { Tone } from '../components/BaseBadge.vue';
+import EmptyState from '../components/EmptyState.vue';
+import BaseIcon from '../components/BaseIcon.vue';
+import type { IconName } from '../components/BaseIcon.vue';
+import SkeletonRows from '../components/SkeletonRows.vue';
 import { formatDate } from '../composables/format';
 import type { Role } from '../types';
 
@@ -44,13 +50,14 @@ const loading = ref(false);
 let timer: ReturnType<typeof setTimeout> | undefined;
 let sequence = 0;
 
-const STATUS_STYLES: Record<Run['status'], string> = {
-    queued: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300',
-    running: 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300',
-    succeeded: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
-    failed: 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300',
-    cancelled: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
+const STATUS: Record<Run['status'], { tone: Tone; icon: IconName }> = {
+    queued: { tone: 'neutral', icon: 'clock' },
+    running: { tone: 'accent', icon: 'refresh' },
+    succeeded: { tone: 'success', icon: 'check' },
+    failed: { tone: 'danger', icon: 'x-circle' },
+    cancelled: { tone: 'warning', icon: 'ban' },
 };
+const loaded = ref(false);
 
 const active = computed(() => runs.value.some((run) => run.status === 'queued' || run.status === 'running'));
 
@@ -67,6 +74,7 @@ async function load(pageNumber = page.value): Promise<void> {
         }
 
         runs.value = response.data;
+        loaded.value = true;
         page.value = response.meta.page;
         hasMore.value = response.meta.has_more;
     } catch (e) {
@@ -112,49 +120,66 @@ onBeforeUnmount(() => clearTimeout(timer));
 </script>
 
 <template>
-    <section class="min-h-0 flex-1 overflow-y-auto p-4" aria-label="Background runs">
-        <h1 class="mb-3 text-lg font-semibold">Runs</h1>
+    <div class="flex min-h-0 flex-1 flex-col">
+        <header class="dbx-page-header">
+            <BaseIcon name="activity" class="text-fg-subtle" />
+            <h1 class="text-lg font-semibold">Runs</h1>
+            <span class="text-sm text-fg-muted">Background queries, exports, imports, scripts and backups on {{ label }}.</span>
+            <span v-if="active" class="ml-auto inline-flex items-center gap-1.5 text-xs text-fg-muted" role="status"><span class="dbx-spinner size-3" aria-hidden="true" />Updating every 2 seconds</span>
+        </header>
 
-        <p v-if="error" role="alert" class="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">{{ error }}</p>
+        <section class="min-h-0 flex-1 overflow-y-auto p-4" aria-label="Background runs">
+            <div v-if="error" role="alert" class="dbx-callout dbx-callout-danger mb-3"><BaseIcon name="alert-circle" />{{ error }}</div>
 
-        <table class="w-full text-sm">
-            <thead>
-                <tr class="border-b border-zinc-200 text-left text-xs text-zinc-500 dark:border-zinc-800">
-                    <th scope="col" class="px-2 py-1.5">#</th>
-                    <th scope="col" class="px-2 py-1.5">Type</th>
-                    <th scope="col" class="px-2 py-1.5">Status</th>
-                    <th scope="col" class="px-2 py-1.5">Progress</th>
-                    <th scope="col" class="px-2 py-1.5">Created</th>
-                    <th scope="col" class="px-2 py-1.5">Error</th>
-                    <th scope="col" class="px-2 py-1.5 text-right">Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr v-for="run in runs" :key="run.id" class="border-b border-zinc-100 dark:border-zinc-800/60">
-                    <td class="px-2 py-1.5 tabular-nums text-zinc-400">{{ run.id }}</td>
-                    <td class="px-2 py-1.5">{{ run.type }}</td>
-                    <td class="px-2 py-1.5">
-                        <span class="rounded-full px-2 py-0.5 text-xs" :class="STATUS_STYLES[run.status]">{{ run.status }}</span>
-                    </td>
-                    <td class="px-2 py-1.5 tabular-nums">{{ run.progress === null ? '—' : `${run.progress}%` }}</td>
-                    <td class="px-2 py-1.5 whitespace-nowrap text-zinc-500 dark:text-zinc-400" :title="run.created_at">{{ formatDate(run.created_at) }}</td>
-                    <td class="max-w-xs truncate px-2 py-1.5 text-red-700 dark:text-red-300" :title="run.error ?? ''">{{ run.error ?? '' }}</td>
-                    <td class="px-2 py-1.5 text-right whitespace-nowrap">
-                        <button v-if="run.status === 'queued' || run.status === 'running'" type="button" class="dbx-btn dbx-btn-danger" @click="cancel(run)">Cancel</button>
-                        <button v-if="run.result_available" type="button" class="dbx-btn" @click="download(run)">Download</button>
-                    </td>
-                </tr>
-            </tbody>
-        </table>
+            <div v-if="!loaded && loading" class="dbx-card"><SkeletonRows :rows="4" :columns="6" /></div>
+            <EmptyState v-else-if="loaded && runs.length === 0" icon="activity" title="No runs yet">
+                Exports, imports, scripts, backups and CONCURRENTLY index builds run in the background and show up here with their progress.
+            </EmptyState>
+            <div v-else-if="runs.length" class="dbx-card overflow-x-auto">
+                <table class="dbx-table">
+                    <thead>
+                        <tr>
+                            <th scope="col" class="w-px text-right">#</th>
+                            <th scope="col">Type</th>
+                            <th scope="col">Status</th>
+                            <th scope="col">Progress</th>
+                            <th scope="col">Created</th>
+                            <th scope="col">Error</th>
+                            <th scope="col" class="text-right"><span class="sr-only">Actions</span></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr v-for="run in runs" :key="run.id">
+                            <td class="text-right text-xs text-fg-subtle tabular-nums">{{ run.id }}</td>
+                            <td class="font-medium">{{ run.type }}</td>
+                            <td><BaseBadge :tone="STATUS[run.status].tone" :icon="STATUS[run.status].icon">{{ run.status }}<template v-if="run.cancel_requested && (run.status === 'queued' || run.status === 'running')"> · cancelling</template></BaseBadge></td>
+                            <td class="tabular-nums">
+                                <span v-if="run.progress === null" class="text-fg-subtle">—</span>
+                                <span v-else class="flex items-center gap-2">
+                                    <span class="h-1.5 w-20 overflow-hidden rounded-full bg-sunken" role="progressbar" :aria-valuenow="run.progress" aria-valuemin="0" aria-valuemax="100" :aria-label="`Run ${run.id} progress`">
+                                        <span class="block h-full rounded-full bg-accent-solid" :style="{ width: `${run.progress}%` }" />
+                                    </span>
+                                    <span class="text-xs text-fg-muted">{{ run.progress }}%</span>
+                                </span>
+                            </td>
+                            <td class="whitespace-nowrap text-fg-muted" :title="run.created_at">{{ formatDate(run.created_at) }}</td>
+                            <td class="max-w-xs truncate text-danger-fg" :title="run.error ?? ''">{{ run.error ?? '' }}</td>
+                            <td class="text-right whitespace-nowrap">
+                                <span class="inline-flex gap-1.5">
+                                    <button v-if="run.status === 'queued' || run.status === 'running'" type="button" class="dbx-btn dbx-btn-sm dbx-btn-danger-ghost" :disabled="run.cancel_requested" @click="cancel(run)"><BaseIcon name="stop" />Cancel</button>
+                                    <button v-if="run.result_available" type="button" class="dbx-btn dbx-btn-sm" @click="download(run)"><BaseIcon name="download" />Download</button>
+                                </span>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
 
-        <p v-if="!loading && runs.length === 0" class="p-6 text-center text-sm text-zinc-500 dark:text-zinc-400">
-            No runs yet. Exports, imports, scripts and backups land here.
-        </p>
-
-        <div class="mt-3 flex items-center justify-between text-sm">
-            <button type="button" class="dbx-btn" :disabled="loading || page <= 1" @click="load(page - 1)">← Newer</button>
-            <span class="text-zinc-500 dark:text-zinc-400">Page {{ page }}</span>
-            <button type="button" class="dbx-btn" :disabled="loading || !hasMore" @click="load(page + 1)">Older →</button>
-        </div>
-    </section>
+        <footer v-if="page > 1 || hasMore" class="dbx-statusbar">
+            <button type="button" class="dbx-btn dbx-btn-ghost dbx-btn-sm" :disabled="loading || page <= 1" @click="load(page - 1)"><BaseIcon name="chevron-left" />Newer</button>
+            <span>Page {{ page }}</span>
+            <button type="button" class="dbx-btn dbx-btn-ghost dbx-btn-sm" :disabled="loading || !hasMore" @click="load(page + 1)">Older<BaseIcon name="chevron-right" /></button>
+        </footer>
+    </div>
 </template>
