@@ -26,6 +26,7 @@ const links: { name: string; title: string; icon: IconName }[] = [
 const opsLinks = computed(() =>
     [
         { name: 'queries', title: 'Saved queries', icon: 'bookmark' as IconName, admin: false },
+        { name: 'schedules', title: 'Schedules', icon: 'calendar' as IconName, admin: true },
     ].filter((link) => !link.admin || connection.value?.role === 'admin'),
 );
 // end batch 4B
