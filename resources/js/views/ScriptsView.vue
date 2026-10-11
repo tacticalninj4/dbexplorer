@@ -187,7 +187,9 @@ if (saved.last && typeof saved.last.id === 'number') {
             run.value ??= found;
         })
         .catch(() => {
+            // Gone (pruned, or another database): forget it.
             sent.value = '';
+            save();
         });
 }
 
