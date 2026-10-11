@@ -8,14 +8,17 @@ import { basicSetup } from 'codemirror';
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef } from 'vue';
 import { useRoute } from 'vue-router';
 import { api, ApiError, describeError, segment } from '../api';
-import ClassificationBadge from '../components/ClassificationBadge.vue';
 import DataGrid from '../components/DataGrid.vue';
 import EmptyState from '../components/EmptyState.vue';
 import BaseIcon from '../components/BaseIcon.vue';
-import ModalDialog from '../components/ModalDialog.vue';
+import ExportDialog from '../components/ExportDialog.vue';
 import PlanTree from '../components/PlanTree.vue';
 import ResultBar from '../components/ResultBar.vue';
+import RunPanel from '../components/RunPanel.vue';
+import SqlConfirmDialog from '../components/SqlConfirmDialog.vue';
 import { takeForEditor } from '../composables/editorInbox';
+import { isActive, notifyRun } from '../composables/runs';
+import type { BackgroundRun } from '../composables/runs';
 import { findConnection } from '../composables/session';
 import { readStorage, writeStorage } from '../composables/storage';
 import { catalogCompletion } from '../sql/completion';
@@ -45,10 +48,12 @@ interface Tab {
 }
 
 interface Run {
-    status: 'running' | 'confirm' | 'done' | 'failed';
+    status: 'running' | 'confirm' | 'done' | 'failed' | 'background';
     sql: string;
     explain: ExplainMode;
     result?: QueryResponse;
+    /** Run in background (batch 4A): the queued run. */
+    job?: BackgroundRun;
     error?: QueryError & { status: number };
 }
 
@@ -180,6 +185,7 @@ function closeTab(id: string): void {
     const index = tabs.value.findIndex((tab) => tab.id === id);
     tabs.value.splice(index, 1);
     states.delete(id);
+    keepTrack(id);
     runs.delete(id);
 
     if (tabs.value.length === 0) {
@@ -250,8 +256,54 @@ function cancelConfirm(): void {
     }
 }
 
+// batch 4A: run in background, and export a result.
+const exporting = ref<string | null>(null);
+
+/**
+ * Queue the statement at the cursor as a background query (PRD §7.3): no
+ * row cap, the result goes to a JSON Lines file. The server only takes reads
+ * (422 otherwise); the panel below follows the run, with cancel and download.
+ */
+async function startBackground(): Promise<void> {
+    const editor = view.value;
+    if (!editor || running.value) {
+        return;
+    }
+
+    const selection = editor.state.selection.main;
+    const { text } = statementAt(editor.state.doc.toString(), selection.from, selection.to);
+
+    if (text.trim() === '') {
+        return;
+    }
+
+    const tabId = activeId.value;
+    keepTrack(tabId);
+    runs.set(tabId, { status: 'running', sql: text, explain: null });
+    view.value?.dispatch({ effects: setError.of(null) });
+
+    try {
+        const response = await api<{ data: BackgroundRun }>(`${segment(label)}/query`, { method: 'POST', body: { sql: text, background: true } });
+        runs.set(tabId, { status: 'background', sql: text, explain: null, job: response.data });
+    } catch (e) {
+        const status = e instanceof ApiError ? e.status : 0;
+        runs.set(tabId, { status: 'failed', sql: text, explain: null, error: { message: describeError(e), sqlstate: null, position: null, status } });
+    }
+}
+
+/** A tab's still-running background query moves to a toast before the tab shows something else. */
+function keepTrack(tabId: string): void {
+    const job = runs.get(tabId)?.job;
+
+    if (job && isActive(job)) {
+        notifyRun(label, job, 'Background query');
+    }
+}
+// end batch 4A
+
 async function execute(sql: string, offset: number, explain: ExplainMode, confirmedRequest: boolean): Promise<void> {
     const tabId = activeId.value;
+    keepTrack(tabId);
     runs.set(tabId, { status: 'running', sql, explain });
     view.value?.dispatch({ effects: setError.of(null) });
 
@@ -328,14 +380,6 @@ onBeforeUnmount(() => {
     view.value?.destroy();
 });
 
-/** The confirm dialog (409) for each verdict: title, consequence, and the button that runs it. */
-const CONFIRM: Record<Classification, { title: string; text: string; action: string }> = {
-    read: { title: 'Run this statement?', text: 'The server asked for confirmation before running it.', action: 'Run statement' },
-    dml: { title: 'Change rows?', text: 'This statement inserts, updates or deletes rows. It takes effect as soon as it succeeds.', action: 'Run DML' },
-    ddl: { title: 'Change the schema?', text: 'This statement creates, alters or drops database objects. It takes effect as soon as it succeeds.', action: 'Run DDL' },
-    destructive: { title: 'Run a destructive statement?', text: "This statement drops, truncates, or changes every row of a table. It can't be undone from DbExplorer, and you'll be asked for your password.", action: 'Run destructive statement' },
-    unknown: { title: 'Run an unclassified statement?', text: 'DbExplorer could not tell what this statement does. Check it before running it.', action: 'Run statement' },
-};
 const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent);
 const modKey = isMac ? '⌘' : 'Ctrl';
 const shiftKey = isMac ? '⇧' : 'Shift';
@@ -388,6 +432,7 @@ const shiftKey = isMac ? '⇧' : 'Shift';
                 <BaseIcon name="plan" />Explain<kbd class="dbx-kbd ml-0.5 text-fg-subtle">{{ shiftKey }}{{ modKey }}↵</kbd>
             </button>
             <button type="button" class="dbx-btn" :disabled="running" title="EXPLAIN ANALYZE: runs the statement, then rolls it back" @click="start('analyze')">Explain analyze</button>
+            <button type="button" class="dbx-btn" :disabled="running" title="Run a read query as a background run: no row limit, the result goes to a downloadable JSON Lines file" @click="startBackground"><BaseIcon name="activity" />Run in background</button>
             <template v-if="role === 'admin'">
                 <span class="dbx-separator" aria-hidden="true" />
                 <label class="dbx-check" :class="unmask ? 'text-warning-fg' : ''" title="Show masked columns in clear. Every unmasked run is audited.">
@@ -410,6 +455,11 @@ const shiftKey = isMac ? '⇧' : 'Shift';
                     Writes and schema changes ask you to confirm first.
                 </EmptyState>
                 <div v-else-if="run.status === 'running'" class="flex items-center gap-2 p-4 text-sm text-fg-muted" role="status"><span class="dbx-spinner" aria-hidden="true" />Running…</div>
+                <div v-else-if="run.status === 'background' && run.job" class="overflow-auto p-3">
+                    <RunPanel :key="run.job.id" :label="label" :run="run.job" title="Background query" @update="(fresh: BackgroundRun) => run && (run.job = fresh)">
+                        <p class="text-sm text-fg-muted">The query runs on a queue worker with no row limit. When it succeeds, download the result as a JSON Lines file (one array of values per row, in column order). Masked columns stay masked.</p>
+                    </RunPanel>
+                </div>
                 <div v-else-if="run.status === 'confirm'" class="flex items-center gap-2 p-4 text-sm text-fg-muted" role="status"><BaseIcon name="clock" />Waiting for your confirmation…</div>
 
                 <div v-else-if="run.status === 'failed' && run.error" class="overflow-auto p-3">
@@ -429,7 +479,10 @@ const shiftKey = isMac ? '⇧' : 'Shift';
 
                 <template v-else-if="run.result">
                     <DataGrid v-if="resultTab === 'results' && !run.result.plan && run.result.columns.length" :columns="run.result.columns" :rows="run.result.rows" empty-text="The query returned no rows">
-                        <template #toolbar><ResultBar v-model:view="resultTab" :result="run.result" /></template>
+                        <template #toolbar>
+                            <ResultBar v-model:view="resultTab" :result="run.result" />
+                            <button type="button" class="dbx-btn" title="Run this query again in the background and save every row to a file" @click="exporting = run.sql"><BaseIcon name="download" />Export</button>
+                        </template>
                     </DataGrid>
                     <template v-else>
                         <div class="dbx-toolbar"><ResultBar v-model:view="resultTab" :result="run.result" /></div>
@@ -451,31 +504,14 @@ const shiftKey = isMac ? '⇧' : 'Shift';
             </section>
         </div>
 
-        <ModalDialog :open="confirm !== null" :title="confirm ? CONFIRM[confirm.classification].title : ''" wide @close="cancelConfirm">
-            <template v-if="confirm">
-                <div class="space-y-3">
-                    <div
-                        class="dbx-callout"
-                        :class="confirm.classification === 'destructive' ? 'dbx-callout-danger' : confirm.classification === 'read' ? 'dbx-callout-info' : 'dbx-callout-warning'"
-                    >
-                        <BaseIcon :name="confirm.classification === 'destructive' ? 'alert' : 'info'" />
-                        <div>
-                            <p class="flex flex-wrap items-center gap-2">Classified as <ClassificationBadge :value="confirm.classification" /></p>
-                            <p class="mt-1">
-                                {{ CONFIRM[confirm.classification].text }}
-                                <template v-if="confirm.explain === 'analyze'"> EXPLAIN ANALYZE runs it, then rolls it back.</template>
-                            </p>
-                        </div>
-                    </div>
-                    <pre class="dbx-code max-h-56 whitespace-pre-wrap">{{ confirm.sql }}</pre>
-                </div>
-                <div class="mt-4 flex items-center justify-end gap-2 border-t border-line pt-4">
-                    <button type="button" class="dbx-btn dbx-btn-ghost mr-auto" autofocus @click="cancelConfirm">Cancel</button>
-                    <button type="button" class="dbx-btn" :class="confirm.classification === 'destructive' ? 'dbx-btn-danger' : 'dbx-btn-primary'" @click="confirmed">
-                        <BaseIcon :name="confirm.classification === 'destructive' ? 'alert' : 'play'" />{{ CONFIRM[confirm.classification].action }}
-                    </button>
-                </div>
-            </template>
-        </ModalDialog>
+        <SqlConfirmDialog
+            :open="confirm !== null"
+            :classification="confirm?.classification ?? 'read'"
+            :sql="confirm?.sql ?? ''"
+            :note="confirm?.explain === 'analyze' ? 'EXPLAIN ANALYZE runs it, then rolls it back.' : undefined"
+            @confirm="confirmed"
+            @cancel="cancelConfirm"
+        />
+        <ExportDialog :open="exporting !== null" :label="label" :source="{ sql: exporting ?? '' }" @close="exporting = null" />
     </div>
 </template>
