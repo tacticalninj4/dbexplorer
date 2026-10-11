@@ -26,6 +26,7 @@ const router = createRouter({
                 // batch 4B: automation and ops screens (single segments, so they never shadow :schema/:name)
                 { path: 'queries', name: 'queries', component: () => import('./views/SavedQueriesView.vue') },
                 { path: 'schedules', name: 'schedules', component: () => import('./views/SchedulesView.vue') },
+                { path: 'backups', name: 'backups', component: () => import('./views/BackupsView.vue') },
                 // end batch 4B
                 // A function is addressed by its signature, with ?fn=1. Tabs are ?tab=.
                 { path: ':schema/:name', name: 'object', component: ObjectDetail },
