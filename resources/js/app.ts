@@ -23,6 +23,9 @@ const router = createRouter({
                 { path: 'sql', name: 'sql', component: () => import('./views/SqlEditorView.vue') },
                 { path: 'history', name: 'history', component: HistoryView },
                 { path: 'runs', name: 'runs', component: RunsView },
+                // batch 4B: automation and ops screens (single segments, so they never shadow :schema/:name)
+                { path: 'queries', name: 'queries', component: () => import('./views/SavedQueriesView.vue') },
+                // end batch 4B
                 // A function is addressed by its signature, with ?fn=1. Tabs are ?tab=.
                 { path: ':schema/:name', name: 'object', component: ObjectDetail },
             ],

@@ -20,6 +20,15 @@ const links: { name: string; title: string; icon: IconName }[] = [
     { name: 'history', title: 'Query history', icon: 'history' },
     { name: 'runs', title: 'Runs', icon: 'activity' },
 ];
+
+// batch 4B: automation and ops screens. Admin-only items are hidden for
+// other roles; the API enforces the role either way.
+const opsLinks = computed(() =>
+    [
+        { name: 'queries', title: 'Saved queries', icon: 'bookmark' as IconName, admin: false },
+    ].filter((link) => !link.admin || connection.value?.role === 'admin'),
+);
+// end batch 4B
 </script>
 
 <template>
@@ -35,7 +44,7 @@ const links: { name: string; title: string; icon: IconName }[] = [
         <aside class="flex w-68 shrink-0 flex-col border-r border-line bg-panel max-lg:w-60">
             <nav aria-label="Connection" class="flex flex-col gap-px border-b border-line p-2">
                 <router-link
-                    v-for="link in links"
+                    v-for="link in [...links, ...opsLinks]"
                     :key="link.name"
                     :to="{ name: link.name, params: { label } }"
                     class="flex h-7 items-center gap-2.5 rounded-md px-2 text-sm text-fg-muted transition-colors duration-100 hover:bg-hover hover:text-fg"

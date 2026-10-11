@@ -15,6 +15,7 @@ import BaseIcon from '../components/BaseIcon.vue';
 import ModalDialog from '../components/ModalDialog.vue';
 import PlanTree from '../components/PlanTree.vue';
 import ResultBar from '../components/ResultBar.vue';
+import SaveQueryDialog from '../components/SaveQueryDialog.vue';
 import { takeForEditor } from '../composables/editorInbox';
 import { findConnection } from '../composables/session';
 import { readStorage, writeStorage } from '../composables/storage';
@@ -336,6 +337,26 @@ const CONFIRM: Record<Classification, { title: string; text: string; action: str
     destructive: { title: 'Run a destructive statement?', text: "This statement drops, truncates, or changes every row of a table. It can't be undone from DbExplorer, and you'll be asked for your password.", action: 'Run destructive statement' },
     unknown: { title: 'Run an unclassified statement?', text: 'DbExplorer could not tell what this statement does. Check it before running it.', action: 'Run statement' },
 };
+// batch 4B: "Save query" keeps the statement at the cursor (or the selection) as a saved query.
+const saveSql = ref<string | null>(null);
+const savedNotice = ref<string | null>(null);
+let savedTimer: ReturnType<typeof setTimeout> | undefined;
+
+function onQuerySaved(name: string): void {
+    saveSql.value = null;
+    savedNotice.value = name;
+    clearTimeout(savedTimer);
+    savedTimer = setTimeout(() => (savedNotice.value = null), 4000);
+}
+
+function openSave(): void {
+    const editor = view.value;
+    const selection = editor?.state.selection.main;
+    const text = editor && selection ? statementAt(editor.state.doc.toString(), selection.from, selection.to).text : active.value.sql;
+    saveSql.value = text.trim() === '' ? active.value.sql : text;
+}
+// end batch 4B
+
 const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent);
 const modKey = isMac ? '⌘' : 'Ctrl';
 const shiftKey = isMac ? '⇧' : 'Shift';
@@ -398,6 +419,8 @@ const shiftKey = isMac ? '⇧' : 'Shift';
                 </label>
             </template>
             <span class="ml-auto hidden text-xs text-fg-subtle xl:inline">Runs the statement at the cursor, or the selection</span>
+            <button type="button" class="dbx-btn dbx-btn-ghost" title="Save the statement at the cursor, or the selection, as a saved query" @click="openSave"><BaseIcon :name="savedNotice ? 'check' : 'bookmark'" />{{ savedNotice ? 'Saved' : 'Save query' }}</button>
+            <span class="sr-only" role="status">{{ savedNotice ? `Saved as “${savedNotice}”` : '' }}</span>
             <router-link :to="{ name: 'history', params: { label } }" class="dbx-btn dbx-btn-ghost"><BaseIcon name="history" />History</router-link>
         </div>
 
@@ -450,6 +473,8 @@ const shiftKey = isMac ? '⇧' : 'Shift';
                 </template>
             </section>
         </div>
+
+        <SaveQueryDialog :open="saveSql !== null" :label="label" :initial-sql="saveSql ?? ''" @close="saveSql = null" @saved="(query) => onQuerySaved(query.name)" />
 
         <ModalDialog :open="confirm !== null" :title="confirm ? CONFIRM[confirm.classification].title : ''" wide @close="cancelConfirm">
             <template v-if="confirm">
