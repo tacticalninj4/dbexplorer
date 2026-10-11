@@ -278,7 +278,7 @@ watch(label, load, { immediate: true });
                             </span>
                         </div>
                         <p v-if="selected.description" class="text-sm whitespace-pre-wrap text-fg-muted">{{ selected.description }}</p>
-                        <CodeBlock :code="selected.sql" copy-label="Copy SQL" />
+                        <CodeBlock :code="selected.sql" copy-label="Copy SQL" wrap />
 
                         <form class="space-y-3" @submit.prevent="run()">
                             <fieldset v-if="selected.params.length" class="grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-3">

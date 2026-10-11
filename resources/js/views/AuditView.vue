@@ -288,7 +288,7 @@ watch(
                 </div>
                 <div v-if="selected.sql">
                     <h3 class="dbx-label">SQL <span class="font-normal text-fg-subtle">(as logged: masked, may contain literals)</span></h3>
-                    <CodeBlock :code="selected.sql" copy-label="Copy SQL" />
+                    <CodeBlock :code="selected.sql" copy-label="Copy SQL" wrap />
                 </div>
                 <div v-if="hasMeta(selected.meta)">
                     <h3 class="dbx-label">Meta</h3>

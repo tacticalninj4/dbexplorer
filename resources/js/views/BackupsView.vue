@@ -47,6 +47,10 @@ const run = ref<RunState | null>(null);
 let timer: ReturnType<typeof setTimeout> | undefined;
 
 async function load(): Promise<void> {
+    // Admins only: the API answers 403 to anyone else, so don't ask.
+    if (!isAdmin.value) {
+        return;
+    }
     error.value = null;
     try {
         data.value = (await api<{ data: Backups }>(`${segment(label.value)}/backups`)).data;
@@ -230,7 +234,7 @@ onBeforeUnmount(() => clearTimeout(timer));
                             Restoring is deliberately not available here: a button that can overwrite the database you browse would undo every other safeguard.
                             Restore from a terminal, into a database you choose (a copy first), with a login you control. <code class="font-mono">pg_restore --list</code> shows what a dump contains first.
                         </p>
-                        <CodeBlock :code="restoreCommand" copy-label="Copy command" />
+                        <CodeBlock :code="restoreCommand" copy-label="Copy command" wrap />
                     </section>
                 </template>
             </div>

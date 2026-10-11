@@ -52,6 +52,10 @@ const RUN_STATUS: Record<RunSummary['status'], { tone: Tone; icon: IconName }> =
 };
 
 async function load(): Promise<void> {
+    // Admins only: the API answers 403 to anyone else, so don't ask.
+    if (!isAdmin.value) {
+        return;
+    }
     error.value = null;
     try {
         const [list, saved, recent] = await Promise.all([
@@ -356,7 +360,7 @@ watch(label, load, { immediate: true });
                             <span v-if="resyncChanged" class="inline-flex items-center gap-1 font-normal text-danger-fg"><span aria-hidden="true">−</span> approved snapshot</span>
                             <span v-if="resyncChanged" class="inline-flex items-center gap-1 font-normal text-success-fg"><span aria-hidden="true">+</span> saved query now</span>
                         </p>
-                        <p v-if="!resyncChanged && resyncing.sql !== null" class="mb-2 text-sm text-fg-muted">The saved query's SQL matches the approved snapshot. Re-syncing re-approves the same SQL as you, with the permissions below.</p>
+                        <p v-if="!resyncChanged && resyncing.sql !== null" class="mb-2 text-sm text-fg-muted">The saved query's SQL matches the schedule's {{ resyncing.approved ? 'approved' : 'unapproved' }} snapshot. Approving it records you as the approver of this SQL, with the permissions below.</p>
                         <p v-if="resyncing.sql === null" class="mb-2 text-sm text-fg-muted">The schedule has no snapshot yet. This is the SQL you would approve:</p>
                         <ol class="dbx-code max-h-72 list-none p-0 py-1" aria-label="Line diff between the approved snapshot and the saved query">
                             <li

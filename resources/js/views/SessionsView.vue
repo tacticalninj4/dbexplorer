@@ -51,12 +51,26 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 
 const visible = computed(() =>
     (sessions.value ?? []).filter(
-        (session) => (showBackground.value || session.backend_type === 'client backend') && (showIdle.value || session.state !== 'idle'),
+        (session) => (showBackground.value || !isBackground(session)) && (showIdle.value || session.state !== 'idle'),
     ),
 );
+/** A server process, not a connection. Other logins' rows have no backend_type (pg_read_all_stats shows it). */
+function isBackground(session: Session): boolean {
+    return session.backend_type !== null && session.backend_type !== 'client backend';
+}
+
+/** Without pg_read_all_stats, another login's row hides everything but its pid and user. */
+function isRestricted(session: Session): boolean {
+    return session.backend_type === null;
+}
+
 const hiddenCount = computed(() => (sessions.value?.length ?? 0) - visible.value.length);
 
 async function load(): Promise<void> {
+    // Admins only: the API answers 403 to anyone else, so don't ask.
+    if (!isAdmin.value) {
+        return;
+    }
     loading.value = true;
     try {
         sessions.value = (await api<{ data: Session[] }>(`${segment(label.value)}/sessions`)).data;
@@ -224,7 +238,7 @@ onBeforeUnmount(() => clearTimeout(timer));
                                 <td class="text-right font-mono text-xs tabular-nums">{{ session.pid }}</td>
                                 <td class="max-w-56">
                                     <span class="block truncate font-medium" :title="session.usename ?? undefined">{{ session.usename ?? '—' }}</span>
-                                    <span class="block truncate text-xs text-fg-muted" :title="session.application_name ?? undefined">{{ session.application_name || (session.backend_type !== 'client backend' ? session.backend_type : 'no application name') }}</span>
+                                    <span class="block truncate text-xs text-fg-muted" :title="session.application_name ?? undefined">{{ isRestricted(session) ? 'details hidden: another login' : session.application_name || (isBackground(session) ? session.backend_type : 'no application name') }}</span>
                                     <span v-if="session.client" class="block font-mono text-xs text-fg-subtle">{{ session.client }}</span>
                                 </td>
                                 <td class="whitespace-nowrap">
@@ -245,10 +259,11 @@ onBeforeUnmount(() => clearTimeout(timer));
                                             {{ expanded.has(session.pid) ? 'Show less' : 'Show all' }}<template v-if="session.query.length >= 500"> (first 500 characters)</template>
                                         </button>
                                     </template>
-                                    <span v-else class="text-xs text-fg-subtle">—</span>
+                                    <span v-else class="text-xs text-fg-subtle">{{ isRestricted(session) ? 'Not visible to this login' : '—' }}</span>
                                 </td>
                                 <td class="text-right whitespace-nowrap">
-                                    <span v-if="session.backend_type === 'client backend'" class="inline-flex gap-1">
+                                    <span v-if="isRestricted(session)" class="text-xs text-fg-subtle" title="Only this connection's own login can be cancelled or terminated">another login</span>
+                                    <span v-else-if="!isBackground(session)" class="inline-flex gap-1">
                                         <button type="button" class="dbx-btn dbx-btn-sm" :disabled="session.state !== 'active'" :title="session.state === 'active' ? 'Stop the running statement; the session stays connected' : 'Nothing is running'" :aria-label="`Cancel the query of session ${session.pid}`" @click="ask('cancel', session)"><BaseIcon name="stop" />Cancel</button>
                                         <button type="button" class="dbx-btn dbx-btn-sm dbx-btn-danger-ghost" :aria-label="`Terminate session ${session.pid}`" @click="ask('terminate', session)"><BaseIcon name="x-circle" />Terminate</button>
                                     </span>
@@ -268,6 +283,7 @@ onBeforeUnmount(() => clearTimeout(timer));
                 : 'Its running statement stops with an error; the session stays connected and its transaction, if any, is aborted.'"
             :action="action?.kind === 'terminate' ? 'Terminate session' : 'Cancel query'"
             :danger="action?.kind === 'terminate'"
+            :dismiss="action?.kind === 'terminate' ? 'Keep session' : 'Keep running'"
             :busy="actionBusy"
             :error="actionError"
             @cancel="action = null"
