@@ -4,7 +4,7 @@
 |---|---|
 | Verified commit | `2c53133` (main, 2026-10-10) |
 | Sources | Release verifier (test matrix, traceability, docs), independent security audit, end-to-end browser test |
-| Status | 23 fixes **applied** (batches 1–3) + F25 (all) · **in progress:** F24 (4C, 4B merged; 4A pending) · **open:** F27–F31 |
+| Status | 23 fixes **applied** (batches 1–3) + F25 (all) · F24 **applied** (batch 4: 4C, 4B, 4A) · **open:** F27–F32, then final re-verification |
 
 ## How to read this
 
@@ -422,7 +422,7 @@ The full Laravel 9–13 matrix last ran at `4183940`, and batch 3 adds only test
 
 ## 4. UI (Batch 4)
 
-### F24 — HIGH (scope) — Most M3/M4 features have no screens · IN PROGRESS (4C, 4B merged; 4A pending)
+### F24 — HIGH (scope) — Most M3/M4 features have no screens · APPLIED (batch 4, 2026-10-12)
 **Evidence.**
 - The SPA has no screens for:
   - export
@@ -492,6 +492,33 @@ The full Laravel 9–13 matrix last ran at `4183940`, and batch 3 adds only test
   - every flow passed in the browser; the only console noise is an existing favicon 404
   - screenshots and GIF are in `~/Downloads/dbx-batch4/4b/`
 
+### Batch 4A — applied (`da4b8c8` … `3e70b39`, 2026-10-12)
+- **Export:** an export dialog from the Data tab and from SQL results, in CSV, JSON Lines or SQL, with masking applied and download through the signed URL.
+- **Background runs:** "Run in background" in the SQL editor, with inline progress and cancel.
+- **CSV import** (`/:label/import`, editor and up): a wizard covering upload, preview, column mapping and the import mode, then a result listing the skipped rows by row number and message.
+- **Scripts** (`/:label/scripts`, editor and up): transaction and step modes, per-statement results, cancel, and the 409 and 423 flows. It uses the shared `SqlCodeEditor`.
+- **Runs page:**
+  - status and type filters, expandable import and script details, a `?run=N` deep link, cancel and download
+  - polling now keeps going every 2 s; before, it stopped after the first tick
+  - global run toasts
+- **Shared code:** `composables/runs.ts`, `RunPanel`, `RunDetails`, `RunStatusBadge`, `RunToasts`, `ExportDialog`, and a `SqlConfirmDialog` built on 4B's `ConfirmDialog`.
+- **No PHP changes.**
+- **Verification:**
+  - lint, typecheck, build and `composer test` (1406 tests) pass
+  - the pgsql group passes 505/505
+  - every flow passed in Chrome before and after merging `main`, with no console errors or CSP violations
+  - **not covered in the browser:** editor and viewer role gating, because the workbench only grants admin. The final re-verification covers it.
+  - screenshots and GIF are in `~/Downloads/dbx-batch4/4a/`
+
+### F32 — LOW — API gaps the 4A screens work around · NOT STARTED
+| # | Gap | Proposed fix | Reasoning |
+|---|---|---|---|
+| a | Exports can't apply the grid's filters or sort, and the dialog says so | Accept the same validated `sort` and `filters[]` as the rows API, reusing `RowsQuery` so the S12 allowlists apply | Users expect "export what I see". Reusing the rows builder means no second filter parser. |
+| b | The import size limit isn't exposed, so the UI relies on the server's 422 | Expose `limits.import.max_kb` (no secrets) through `/api/me`, or the import preview endpoint | It lets the UI reject an oversized file before uploading it |
+| c | Run timestamps are whole seconds, so short runs show "under 1 s" | Store `duration_ms` on runs, or use millisecond timestamps | It's cosmetic, but it makes timing of quick jobs legible |
+| env | Every worktree shares one `jobs` table, so one worktree's queue worker took another's exports | Dev only: give each workbench its own queue table or database. It can't happen in a real install. | It confused parallel agent testing |
+| — | 4B's `BackupsView` polls runs itself instead of using `RunPanel` | Move it onto `RunPanel` | One polling implementation, not two |
+
 ### F28–F31 — LOW — API gaps the 4B screens work around · NOT STARTED
 | # | Gap | Proposed fix | Reasoning |
 |---|---|---|---|
@@ -531,5 +558,6 @@ The verifier confirmed these are pinned by `GAP:` tests and documented in docs/s
 ## 7. Next steps (awaiting your go-ahead)
 1. ~~Batch 2 (F13–F16, F26)~~: merged into `main` at `4183940`. Next: finish F18 and F19 from `wt-b3`.
 2. ~~F18, F19, F21–F23 (batch 3)~~: merged into `main` at `a1f63ea`.
+3. ~~UI polish and batch 4 (F24, F25)~~: merged into `main`.
 3. Commit your UI work, then do F24 and F25 (screens).
 4. Run the full verification again (the same three checks) before any tag.
