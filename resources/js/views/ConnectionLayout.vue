@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
+import CreateObjectHost from '../components/CreateObjectHost.vue';
 import EmptyState from '../components/EmptyState.vue';
 import BaseIcon from '../components/BaseIcon.vue';
 import type { IconName } from '../components/BaseIcon.vue';
@@ -63,5 +64,6 @@ const opsLinks = computed(() =>
         <div class="flex min-w-0 flex-1 flex-col">
             <router-view :key="label" />
         </div>
+        <CreateObjectHost v-if="connection.role === 'admin'" :key="label" :label="label" />
     </div>
 </template>

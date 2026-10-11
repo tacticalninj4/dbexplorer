@@ -4,6 +4,9 @@ import { useRoute, useRouter } from 'vue-router';
 import type { RouteLocationRaw } from 'vue-router';
 import { api, describeError, segment } from '../api';
 import * as catalog from '../composables/catalog';
+import { openCreate } from '../composables/ddl';
+import type { CreateKind } from '../composables/ddl';
+import { findConnection } from '../composables/session';
 import type { DbObject, Extension, ObjectType, Schema } from '../types';
 import BaseIcon from './BaseIcon.vue';
 import type { IconName } from './BaseIcon.vue';
@@ -11,7 +14,8 @@ import type { IconName } from './BaseIcon.vue';
 /**
  * Schemas, then object groups by type, loaded per schema on first expand.
  * Keyboard: a WAI-ARIA tree with one tab stop; arrows move and expand,
- * Home/End jump, Enter opens.
+ * Home/End jump, Enter opens. Admins get a create menu on schema nodes
+ * (right-click, the Menu key or Shift+F10) and behind the "New" button.
  */
 const props = defineProps<{ label: string }>();
 
@@ -253,6 +257,13 @@ function focusNode(key: string | undefined): void {
 }
 
 function onKeydown(event: KeyboardEvent, node: Node): void {
+    if (isAdmin.value && node.kind === 'schema' && (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey))) {
+        event.preventDefault();
+        const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+        openMenu(node.text, rect.bottom, rect.left + 24, event.currentTarget as HTMLElement);
+        return;
+    }
+
     const list = nodes.value.filter((item) => item.kind !== 'message');
     const index = list.findIndex((item) => item.key === node.key);
 
@@ -379,22 +390,115 @@ watch(() => route.fullPath, revealCurrent);
 
 // A schema change elsewhere (DDL form) dropped cached objects: reload what's open.
 watch(catalog.catalogVersion, () => {
-    for (const schema of Object.keys(objects.value)) {
+    const reloads = Object.keys(objects.value).map((schema) => {
         delete objects.value[schema];
-        void loadSchema(schema);
-    }
+
+        return loadSchema(schema);
+    });
+
+    // A create form may have navigated to the new object meanwhile: show it.
+    void Promise.all(reloads).then(revealCurrent);
 });
 
-onBeforeUnmount(() => clearTimeout(searchTimer));
+// Create menu (admins): New table / view / materialized view in a schema.
+const isAdmin = computed(() => findConnection(props.label)?.role === 'admin');
+const CREATE_ITEMS: { kind: CreateKind; title: string; icon: IconName }[] = [
+    { kind: 'table', title: 'New table…', icon: 'table' },
+    { kind: 'view', title: 'New view…', icon: 'view' },
+    { kind: 'materialized_view', title: 'New materialized view…', icon: 'matview' },
+];
+const menu = ref<{ schema: string; top: number; left: number; trigger: HTMLElement | null } | null>(null);
+const menuEl = ref<HTMLElement | null>(null);
+const newButton = ref<HTMLElement | null>(null);
+
+function openMenu(schema: string, top: number, left: number, trigger: HTMLElement | null): void {
+    menu.value = { schema, top: Math.min(top, window.innerHeight - 120), left: Math.min(left, window.innerWidth - 240), trigger };
+    document.addEventListener('pointerdown', onOutside, true);
+    void nextTick(() => menuEl.value?.querySelector<HTMLElement>('[role="menuitem"]')?.focus());
+}
+
+function closeMenu(restoreFocus = true): void {
+    const trigger = menu.value?.trigger;
+    menu.value = null;
+    document.removeEventListener('pointerdown', onOutside, true);
+
+    if (restoreFocus) {
+        trigger?.focus();
+    }
+}
+
+function onOutside(event: Event): void {
+    if (!(event.target instanceof globalThis.Node && menuEl.value?.contains(event.target)) && event.target !== menu.value?.trigger) {
+        closeMenu(false);
+    }
+}
+
+/** The schema "New" creates in: the open object's, else public, else the first. */
+function defaultSchema(): string {
+    const current = route.params.schema;
+
+    if (route.name === 'object' && typeof current === 'string') {
+        return current;
+    }
+
+    return schemas.value.some((schema) => schema.name === 'public') ? 'public' : (schemas.value[0]?.name ?? 'public');
+}
+
+function toggleNewMenu(): void {
+    if (menu.value) {
+        closeMenu();
+        return;
+    }
+
+    const rect = newButton.value?.getBoundingClientRect();
+    openMenu(defaultSchema(), (rect?.bottom ?? 0) + 4, rect?.left ?? 0, newButton.value);
+}
+
+function onNodeContextMenu(event: MouseEvent, node: Node): void {
+    if (!isAdmin.value || node.kind !== 'schema') {
+        return;
+    }
+
+    event.preventDefault();
+    focusedKey.value = node.key;
+    openMenu(node.text, event.clientY, event.clientX, event.currentTarget as HTMLElement);
+}
+
+function onMenuKeydown(event: KeyboardEvent): void {
+    const items = [...(menuEl.value?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
+    const index = items.indexOf(document.activeElement as HTMLElement);
+    const moves: Record<string, number> = { ArrowDown: index + 1, ArrowUp: index - 1, Home: 0, End: items.length - 1 };
+
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        closeMenu();
+    } else if (event.key === 'Tab') {
+        closeMenu(false);
+    } else if (moves[event.key] !== undefined) {
+        event.preventDefault();
+        items[((moves[event.key] as number) + items.length) % items.length]?.focus();
+    }
+}
+
+function create(kind: CreateKind): void {
+    const schema = menu.value?.schema ?? defaultSchema();
+    closeMenu(false);
+    openCreate(kind, schema);
+}
+
+onBeforeUnmount(() => {
+    clearTimeout(searchTimer);
+    document.removeEventListener('pointerdown', onOutside, true);
+});
 
 const levelPadding = ['pl-1.5', 'pl-1.5', 'pl-4', 'pl-[1.875rem]'];
 </script>
 
 <template>
     <nav class="flex min-h-0 flex-1 flex-col" aria-label="Database objects">
-        <div class="px-2 pt-2.5 pb-2">
+        <div class="flex items-center gap-1.5 px-2 pt-2.5 pb-2">
             <label for="dbx-object-search" class="sr-only">Search objects</label>
-            <div class="relative">
+            <div class="relative min-w-0 flex-1">
                 <BaseIcon name="search" :size="14" class="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-fg-subtle" />
                 <input
                     id="dbx-object-search"
@@ -409,7 +513,37 @@ const levelPadding = ['pl-1.5', 'pl-1.5', 'pl-4', 'pl-[1.875rem]'];
                 >
                 <span v-if="searching" class="dbx-spinner absolute top-1/2 right-2 -translate-y-1/2" aria-hidden="true" />
             </div>
+            <button
+                v-if="isAdmin"
+                ref="newButton"
+                type="button"
+                class="dbx-btn dbx-btn-icon"
+                aria-label="New table or view"
+                title="New table or view"
+                aria-haspopup="menu"
+                :aria-expanded="menu !== null && menu.trigger === newButton"
+                @click="toggleNewMenu"
+            >
+                <BaseIcon name="plus" />
+            </button>
         </div>
+
+        <Transition name="dbx-pop">
+            <div
+                v-if="menu"
+                ref="menuEl"
+                role="menu"
+                :aria-label="`Create in schema ${menu.schema}`"
+                class="dbx-menu fixed mt-0 w-56"
+                :style="{ top: `${menu.top}px`, left: `${menu.left}px` }"
+                @keydown="onMenuKeydown"
+            >
+                <p class="truncate px-2 pt-1 pb-1.5 text-xs text-fg-subtle" aria-hidden="true">In schema <span class="font-medium text-fg-muted">{{ menu.schema }}</span></p>
+                <button v-for="item in CREATE_ITEMS" :key="item.kind" type="button" role="menuitem" tabindex="-1" class="dbx-menu-item" @click="create(item.kind)">
+                    <BaseIcon :name="item.icon" :size="14" class="text-fg-subtle" />{{ item.title }}
+                </button>
+            </div>
+        </Transition>
 
         <div class="min-h-0 flex-1 overflow-auto pb-2 text-sm">
             <template v-if="query.trim() !== ''">
@@ -452,9 +586,11 @@ const levelPadding = ['pl-1.5', 'pl-1.5', 'pl-4', 'pl-[1.875rem]'];
                             node.kind === 'message' ? 'text-fg-subtle italic' : 'transition-colors duration-100 hover:bg-hover',
                             node.selected ? 'bg-accent-soft! text-accent-soft-fg' : '',
                         ]"
+                        :aria-haspopup="isAdmin && node.kind === 'schema' ? 'menu' : undefined"
                         @click="node.kind !== 'message' && activate(node)"
                         @focus="node.kind !== 'message' && (focusedKey = node.key)"
                         @keydown="onKeydown($event, node)"
+                        @contextmenu="onNodeContextMenu($event, node)"
                     >
                         <span class="grid w-3.5 shrink-0 place-items-center text-fg-subtle" aria-hidden="true">
                             <BaseIcon

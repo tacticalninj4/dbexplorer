@@ -7,6 +7,7 @@ import BaseIcon from '../components/BaseIcon.vue';
 import RoleBadge from '../components/RoleBadge.vue';
 import SkeletonRows from '../components/SkeletonRows.vue';
 import * as catalog from '../composables/catalog';
+import { openCreate } from '../composables/ddl';
 import { findConnection } from '../composables/session';
 import type { Extension, Schema } from '../types';
 
@@ -70,12 +71,18 @@ watch(label, load, { immediate: true });
                     <EmptyState v-if="schemas.length === 0" icon="schema" title="No schemas you can access" />
                     <div v-else class="dbx-card overflow-x-auto">
                         <table class="dbx-table">
-                            <thead><tr><th>Name</th><th>Owner</th><th>Comment</th></tr></thead>
+                            <thead><tr><th>Name</th><th>Owner</th><th>Comment</th><th v-if="connection?.role === 'admin'"><span class="sr-only">Actions</span></th></tr></thead>
                             <tbody>
                                 <tr v-for="schema in schemas" :key="schema.name">
                                     <td class="font-medium"><span class="inline-flex items-center gap-2"><BaseIcon name="schema" :size="14" class="text-fg-subtle" />{{ schema.name }}</span></td>
                                     <td class="text-fg-muted">{{ schema.owner }}</td>
                                     <td class="text-fg-muted">{{ schema.comment ?? '' }}</td>
+                                    <td v-if="connection?.role === 'admin'" class="w-px whitespace-nowrap">
+                                        <span class="flex justify-end gap-1">
+                                            <button type="button" class="dbx-btn dbx-btn-sm" :aria-label="`New table in ${schema.name}`" @click="openCreate('table', schema.name)"><BaseIcon name="plus" />Table</button>
+                                            <button type="button" class="dbx-btn dbx-btn-sm" :aria-label="`New view in ${schema.name}`" @click="openCreate('view', schema.name)"><BaseIcon name="plus" />View</button>
+                                        </span>
+                                    </td>
                                 </tr>
                             </tbody>
                         </table>

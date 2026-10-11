@@ -182,9 +182,10 @@ watch(
         selectedIndex.value = -1;
         editor.value = null;
         restart();
-        primaryKey(props.label, props.schema, props.name).then((columns) => {
-            key.value = columns;
-        });
+        // Views and matviews have no constraints endpoint (404): they stay read-only.
+        primaryKey(props.label, props.schema, props.name)
+            .then((columns) => (key.value = columns))
+            .catch(() => (key.value = null));
     },
     { immediate: true },
 );

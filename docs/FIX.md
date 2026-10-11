@@ -4,7 +4,7 @@
 |---|---|
 | Verified commit | `2c53133` (main, 2026-10-10) |
 | Sources | Release verifier (test matrix, traceability, docs), independent security audit, end-to-end browser test |
-| Status | 23 fixes **applied** (batches 1–3) + F25a/b/e (UI polish) · **open:** F24 (missing screens), F25c (decided: explicit overwrite), F25d |
+| Status | 23 fixes **applied** (batches 1–3) + F25 (all) · **in progress:** F24 (batch 4C merged; 4A/4B pending) · **open:** F27 |
 
 ## How to read this
 
@@ -422,7 +422,7 @@ The full Laravel 9–13 matrix last ran at `4183940`, and batch 3 adds only test
 
 ## 4. UI (Batch 4)
 
-### F24 — HIGH (scope) — Most M3/M4 features have no screens · NOT STARTED
+### F24 — HIGH (scope) — Most M3/M4 features have no screens · IN PROGRESS (4C merged; 4B, 4A pending)
 **Evidence.**
 - The SPA has no screens for:
   - export
@@ -447,16 +447,44 @@ The full Laravel 9–13 matrix last ran at `4183940`, and batch 3 adds only test
 - **Most of the product's value is unreachable without screens.** A phpMyAdmin replacement isn't one if exports, imports, backups and sessions need curl.
 - **Building after batches 1–3 means the screens target the corrected API.** That's the fixed schedule flow and the import error fields.
 
-### F25 — LOW — Smaller UI and API issues · PARTLY APPLIED (a, b, e in the UI polish, `ui-polish` → `main`)
+### F25 — LOW — Smaller UI and API issues · APPLIED (a, b, e in the UI polish; c, d in batch 4C, `b88e402`, `ce14223`)
 | # | Issue | Proposed fix | Reasoning |
 |---|---|---|---|
 | a ✅ | The DDL form's "Queued as run #N" notice never appears, because the dialog closes first | Show it as a toast or banner that outlives the dialog, linking to the run | The user otherwise doesn't know a background job started (`CONCURRENTLY`) |
 | b ✅ | After dropping a table, the page stays on the 404 and the tree still lists the table | After a successful DDL execute, invalidate the tree cache and navigate to the schema | Stale navigation makes a successful drop look failed |
-| c | After a save conflict, the only option is "reload" | **Decided (2026-10-11): yes, explicit and audited.** Show a diff of your values against the current row, plus an "Overwrite with mine" button that re-issues the update with the current row as the new `original`. It's still conflict-checked. | Clobbering is legitimate when it's a deliberate choice. The 409 stays the default safety net. |
-| d | `POST rows` with no values inserts a row of defaults (201) | Require at least one value or an explicit `defaults: true` (422 otherwise) | Inserting an all-defaults row by accident, for example from an empty form, is a surprising write |
+| c ✅ | After a save conflict, the only option is "reload" | **Decided (2026-10-11): yes, explicit and audited.** Show a diff of your values against the current row, plus an "Overwrite with mine" button that re-issues the update with the current row as the new `original`. It's still conflict-checked. | Clobbering is legitimate when it's a deliberate choice. The 409 stays the default safety net. |
+| d ✅ | `POST rows` with no values inserts a row of defaults (201) | Require at least one value or an explicit `defaults: true` (422 otherwise) | Inserting an all-defaults row by accident, for example from an empty form, is a surprising write |
 | e ✅ | The editor shows "5 rows" for a `DELETE` with no result set | Show "N rows affected" for statements with no result set | Mixing up rows *returned* and rows *affected* is misleading after destructive SQL |
 
 ---
+
+### Batch 4C — applied (`b88e402` … `86730e6`, dist `5bcf77e`, 2026-10-12)
+- **Schema forms (admin only):**
+  - Create table, view and materialized view. These open from the schema context menu in the tree (right-click, Menu key or Shift+F10), from the tree's "+" button, and from the schema rows on the connection overview.
+  - Add and drop constraints on the Constraints tab. Drop is styled destructive and needs password re-confirmation.
+  - A Refresh button on materialized views.
+  - Every form previews the server-built SQL, with a classification badge per statement and a raw-expression warning. The client never builds SQL itself.
+- **F25c:** a 409 shows each field as loaded, as yours, and as it is now.
+  - "Reload row" starts again from the current row.
+  - "Overwrite with mine" re-sends only your edits, using the conflict's `current` row as `original`, so it's still conflict-checked.
+  - The audit entry gets `meta.overwrite: true`. That marker is informational: the client sets it, and it changes no check.
+- **F25d:** `POST rows` with no values returns 422 unless `defaults: true` is sent. The UI only sends it from an explicit "Insert a row with all defaults" action.
+- **Fixed along the way:** the constraints endpoint returns 404 for views, which threw an uncaught error on every view's Data tab. The UI now handles it.
+- **Verification:**
+  - lint, typecheck, build and `composer test` pass
+  - the pgsql group passes 505/505
+  - on Laravel 9 / PHP 8.0, the RowWriter and Feature suites pass
+  - every flow passed in the browser, with no console errors or CSP violations
+  - screenshots and GIF are in `~/Downloads/dbx-batch4/4c/`
+
+### F27 — MEDIUM — `REFRESH MATERIALIZED VIEW CONCURRENTLY` runs inside the HTTP request · NOT STARTED
+**Evidence.** Batch 4C found the refresh runs synchronously, although `DdlController`'s comment says it's handed to a background run. Views are always created with `CREATE OR REPLACE`, so there's no toggle for it.
+
+**Proposed fix.** Send `REFRESH … CONCURRENTLY`, which can't run inside a transaction, through the same background-run path as `CREATE INDEX CONCURRENTLY`. The UI's queued-run notice is already wired for it. Then fix the comment.
+
+**Reasoning.**
+- A large materialized view can take minutes to refresh. Inside a request it hits PHP and proxy timeouts and holds a worker.
+- This is exactly what the PRD's "long-running work goes to the backend" principle (§7.5) forbids.
 
 ## 5. Environment notes (no code fix)
 
