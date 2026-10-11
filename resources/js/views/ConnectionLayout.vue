@@ -29,6 +29,7 @@ const opsLinks = computed(() =>
         { name: 'schedules', title: 'Schedules', icon: 'calendar' as IconName, admin: true },
         { name: 'backups', title: 'Backups', icon: 'archive' as IconName, admin: true },
         { name: 'sessions', title: 'Active sessions', icon: 'users' as IconName, admin: true },
+        { name: 'audit', title: 'Audit log', icon: 'file-text' as IconName, admin: true },
     ].filter((link) => !link.admin || connection.value?.role === 'admin'),
 );
 // end batch 4B

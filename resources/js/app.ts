@@ -28,6 +28,7 @@ const router = createRouter({
                 { path: 'schedules', name: 'schedules', component: () => import('./views/SchedulesView.vue') },
                 { path: 'backups', name: 'backups', component: () => import('./views/BackupsView.vue') },
                 { path: 'sessions', name: 'sessions', component: () => import('./views/SessionsView.vue') },
+                { path: 'audit', name: 'audit', component: () => import('./views/AuditView.vue') },
                 // end batch 4B
                 // A function is addressed by its signature, with ?fn=1. Tabs are ?tab=.
                 { path: ':schema/:name', name: 'object', component: ObjectDetail },
