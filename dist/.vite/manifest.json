@@ -1,23 +1,187 @@
 {
+  "_ConfirmDialog-BjIW3VQ2.js": {
+    "file": "assets/ConfirmDialog-BjIW3VQ2.js",
+    "name": "ConfirmDialog",
+    "imports": [
+      "_api-tQXH4Ncn.js",
+      "resources/js/app.ts"
+    ]
+  },
+  "_ConstraintFields-CQB2R67S.js": {
+    "file": "assets/ConstraintFields-CQB2R67S.js",
+    "name": "ConstraintFields",
+    "imports": [
+      "_api-tQXH4Ncn.js",
+      "resources/js/app.ts"
+    ]
+  },
+  "_SaveQueryDialog-B_cwctPI.js": {
+    "file": "assets/SaveQueryDialog-B_cwctPI.js",
+    "name": "SaveQueryDialog",
+    "imports": [
+      "_SqlCodeEditor-2vuxVTqD.js",
+      "_api-tQXH4Ncn.js",
+      "resources/js/app.ts",
+      "_savedQueries-CdXe-z15.js"
+    ]
+  },
+  "_SqlCodeEditor-2vuxVTqD.js": {
+    "file": "assets/SqlCodeEditor-2vuxVTqD.js",
+    "name": "SqlCodeEditor",
+    "imports": [
+      "_api-tQXH4Ncn.js",
+      "resources/js/app.ts"
+    ]
+  },
+  "_api-tQXH4Ncn.js": {
+    "file": "assets/api-tQXH4Ncn.js",
+    "name": "api"
+  },
+  "_savedQueries-CdXe-z15.js": {
+    "file": "assets/savedQueries-CdXe-z15.js",
+    "name": "savedQueries",
+    "imports": [
+      "_api-tQXH4Ncn.js"
+    ]
+  },
   "resources/js/app.ts": {
-    "file": "assets/app-Btzks__S.js",
+    "file": "assets/app-B06j72jR.js",
     "name": "app",
     "src": "resources/js/app.ts",
     "isEntry": true,
+    "imports": [
+      "_api-tQXH4Ncn.js"
+    ],
     "dynamicImports": [
-      "resources/js/views/SqlEditorView.vue"
+      "resources/js/components/CreateTableForm.vue",
+      "resources/js/components/CreateViewForm.vue",
+      "resources/js/components/ConstraintForm.vue",
+      "resources/js/components/RefreshMatviewForm.vue",
+      "resources/js/views/SqlEditorView.vue",
+      "resources/js/views/SavedQueriesView.vue",
+      "resources/js/views/SchedulesView.vue",
+      "resources/js/views/BackupsView.vue",
+      "resources/js/views/SessionsView.vue",
+      "resources/js/views/AuditView.vue"
     ],
     "css": [
-      "assets/app-SPhy3G7Q.css"
+      "assets/app-C8DsRDZr.css"
+    ]
+  },
+  "resources/js/components/ConstraintForm.vue": {
+    "file": "assets/ConstraintForm-BXqvSZlJ.js",
+    "name": "ConstraintForm",
+    "src": "resources/js/components/ConstraintForm.vue",
+    "isDynamicEntry": true,
+    "imports": [
+      "_api-tQXH4Ncn.js",
+      "resources/js/app.ts",
+      "_ConstraintFields-CQB2R67S.js"
+    ]
+  },
+  "resources/js/components/CreateTableForm.vue": {
+    "file": "assets/CreateTableForm-CRxM2u3l.js",
+    "name": "CreateTableForm",
+    "src": "resources/js/components/CreateTableForm.vue",
+    "isDynamicEntry": true,
+    "imports": [
+      "_api-tQXH4Ncn.js",
+      "resources/js/app.ts",
+      "_ConstraintFields-CQB2R67S.js"
+    ]
+  },
+  "resources/js/components/CreateViewForm.vue": {
+    "file": "assets/CreateViewForm-DbtBqFE3.js",
+    "name": "CreateViewForm",
+    "src": "resources/js/components/CreateViewForm.vue",
+    "isDynamicEntry": true,
+    "imports": [
+      "_api-tQXH4Ncn.js",
+      "resources/js/app.ts"
+    ],
+    "dynamicImports": [
+      "_SqlCodeEditor-2vuxVTqD.js"
+    ]
+  },
+  "resources/js/components/RefreshMatviewForm.vue": {
+    "file": "assets/RefreshMatviewForm-Sh8mojAX.js",
+    "name": "RefreshMatviewForm",
+    "src": "resources/js/components/RefreshMatviewForm.vue",
+    "isDynamicEntry": true,
+    "imports": [
+      "_api-tQXH4Ncn.js",
+      "resources/js/app.ts"
+    ]
+  },
+  "resources/js/views/AuditView.vue": {
+    "file": "assets/AuditView-BZOjl0Rs.js",
+    "name": "AuditView",
+    "src": "resources/js/views/AuditView.vue",
+    "isDynamicEntry": true,
+    "imports": [
+      "_api-tQXH4Ncn.js",
+      "resources/js/app.ts"
+    ],
+    "css": [
+      "assets/AuditView-Bk-8zInq.css"
+    ]
+  },
+  "resources/js/views/BackupsView.vue": {
+    "file": "assets/BackupsView-DZIFOCkt.js",
+    "name": "BackupsView",
+    "src": "resources/js/views/BackupsView.vue",
+    "isDynamicEntry": true,
+    "imports": [
+      "_api-tQXH4Ncn.js",
+      "resources/js/app.ts"
+    ]
+  },
+  "resources/js/views/SavedQueriesView.vue": {
+    "file": "assets/SavedQueriesView-BDLFPLIU.js",
+    "name": "SavedQueriesView",
+    "src": "resources/js/views/SavedQueriesView.vue",
+    "isDynamicEntry": true,
+    "imports": [
+      "_api-tQXH4Ncn.js",
+      "resources/js/app.ts",
+      "_ConfirmDialog-BjIW3VQ2.js",
+      "_SaveQueryDialog-B_cwctPI.js",
+      "_savedQueries-CdXe-z15.js"
+    ]
+  },
+  "resources/js/views/SchedulesView.vue": {
+    "file": "assets/SchedulesView-XZx_KP7_.js",
+    "name": "SchedulesView",
+    "src": "resources/js/views/SchedulesView.vue",
+    "isDynamicEntry": true,
+    "imports": [
+      "_api-tQXH4Ncn.js",
+      "resources/js/app.ts",
+      "_ConfirmDialog-BjIW3VQ2.js",
+      "_savedQueries-CdXe-z15.js"
+    ]
+  },
+  "resources/js/views/SessionsView.vue": {
+    "file": "assets/SessionsView-BBt2siui.js",
+    "name": "SessionsView",
+    "src": "resources/js/views/SessionsView.vue",
+    "isDynamicEntry": true,
+    "imports": [
+      "_api-tQXH4Ncn.js",
+      "resources/js/app.ts",
+      "_ConfirmDialog-BjIW3VQ2.js"
     ]
   },
   "resources/js/views/SqlEditorView.vue": {
-    "file": "assets/SqlEditorView-R943K05K.js",
+    "file": "assets/SqlEditorView-hjJIRAH3.js",
     "name": "SqlEditorView",
     "src": "resources/js/views/SqlEditorView.vue",
     "isDynamicEntry": true,
     "imports": [
-      "resources/js/app.ts"
+      "_SqlCodeEditor-2vuxVTqD.js",
+      "_api-tQXH4Ncn.js",
+      "resources/js/app.ts",
+      "_SaveQueryDialog-B_cwctPI.js"
     ]
   }
 }

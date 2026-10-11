@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { Classification } from '../types';
-import BaseIcon from './BaseIcon.vue';
 import ClassificationBadge from './ClassificationBadge.vue';
-import ModalDialog from './ModalDialog.vue';
+import ConfirmDialog from './ConfirmDialog.vue';
 
 /**
  * The server's 409 `confirmation_required` (M2.2), for the SQL editor and the
- * script runner: what the server classified the SQL as, the consequence in
- * words, and a button that names the action. Cancel has focus. A destructive
+ * script runner, on the shared ConfirmDialog: what the server classified the
+ * SQL as, the consequence in words, and a button that names the action.
+ * Cancel has focus. A destructive
  * verdict continues into the password modal through api()'s 423 handling.
  */
 const props = withDefaults(
@@ -44,22 +44,17 @@ const text = computed(() => {
 </script>
 
 <template>
-    <ModalDialog :open="open" :title="text.title" wide @close="emit('cancel')">
-        <div class="space-y-3">
-            <div class="dbx-callout" :class="classification === 'destructive' ? 'dbx-callout-danger' : classification === 'read' ? 'dbx-callout-info' : 'dbx-callout-warning'">
-                <BaseIcon :name="classification === 'destructive' ? 'alert' : 'info'" />
-                <div>
-                    <p class="flex flex-wrap items-center gap-2">Classified as <ClassificationBadge :value="classification" /></p>
-                    <p class="mt-1">{{ text.text }}<template v-if="note"> {{ note }}</template></p>
-                </div>
-            </div>
-            <pre class="dbx-code max-h-56 whitespace-pre-wrap">{{ sql }}</pre>
-        </div>
-        <div class="mt-4 flex items-center justify-end gap-2 border-t border-line pt-4">
-            <button type="button" class="dbx-btn dbx-btn-ghost mr-auto" autofocus @click="emit('cancel')">Cancel</button>
-            <button type="button" class="dbx-btn" :class="classification === 'destructive' ? 'dbx-btn-danger' : 'dbx-btn-primary'" @click="emit('confirm')">
-                <BaseIcon :name="classification === 'destructive' ? 'alert' : 'play'" />{{ text.action }}
-            </button>
-        </div>
-    </ModalDialog>
+    <ConfirmDialog
+        :open="open"
+        :title="text.title"
+        :message="note ? `${text.text} ${note}` : text.text"
+        :action="text.action"
+        :danger="classification === 'destructive'"
+        :warning="classification !== 'destructive' && classification !== 'read'"
+        @confirm="emit('confirm')"
+        @cancel="emit('cancel')"
+    >
+        <p class="flex flex-wrap items-center gap-2 text-sm text-fg-muted">Classified by the server as <ClassificationBadge :value="classification" /></p>
+        <pre class="dbx-code max-h-56 whitespace-pre-wrap">{{ sql }}</pre>
+    </ConfirmDialog>
 </template>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
+import CreateObjectHost from '../components/CreateObjectHost.vue';
 import EmptyState from '../components/EmptyState.vue';
 import BaseIcon from '../components/BaseIcon.vue';
 import type { IconName } from '../components/BaseIcon.vue';
@@ -27,8 +28,20 @@ const batch4aLinks: { name: string; title: string; icon: IconName; min: Role }[]
     { name: 'scripts', title: 'Scripts', icon: 'file', min: 'editor' },
     { name: 'import', title: 'Import CSV', icon: 'upload', min: 'editor' },
 ];
-const navLinks = computed(() => [...links, ...batch4aLinks.filter((link) => hasRole(label.value, link.min))]);
+const navLinks4a = computed(() => batch4aLinks.filter((link) => hasRole(label.value, link.min)));
 // end batch 4A
+// batch 4B: automation and ops screens. Admin-only items are hidden for
+// other roles; the API enforces the role either way.
+const opsLinks = computed(() =>
+    [
+        { name: 'queries', title: 'Saved queries', icon: 'bookmark' as IconName, admin: false },
+        { name: 'schedules', title: 'Schedules', icon: 'calendar' as IconName, admin: true },
+        { name: 'backups', title: 'Backups', icon: 'archive' as IconName, admin: true },
+        { name: 'sessions', title: 'Active sessions', icon: 'users' as IconName, admin: true },
+        { name: 'audit', title: 'Audit log', icon: 'file-text' as IconName, admin: true },
+    ].filter((link) => !link.admin || connection.value?.role === 'admin'),
+);
+// end batch 4B
 </script>
 
 <template>
@@ -44,7 +57,7 @@ const navLinks = computed(() => [...links, ...batch4aLinks.filter((link) => hasR
         <aside class="flex w-68 shrink-0 flex-col border-r border-line bg-panel max-lg:w-60">
             <nav aria-label="Connection" class="flex flex-col gap-px border-b border-line p-2">
                 <router-link
-                    v-for="link in navLinks"
+                    v-for="link in [...links, ...navLinks4a, ...opsLinks]"
                     :key="link.name"
                     :to="{ name: link.name, params: { label } }"
                     class="flex h-7 items-center gap-2.5 rounded-md px-2 text-sm text-fg-muted transition-colors duration-100 hover:bg-hover hover:text-fg"
@@ -59,5 +72,6 @@ const navLinks = computed(() => [...links, ...batch4aLinks.filter((link) => hasR
         <div class="flex min-w-0 flex-1 flex-col">
             <router-view :key="label" />
         </div>
+        <CreateObjectHost v-if="connection.role === 'admin'" :key="label" :label="label" />
     </div>
 </template>

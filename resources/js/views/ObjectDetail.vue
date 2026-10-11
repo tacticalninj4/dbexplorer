@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api, ApiError, describeError, segment } from '../api';
 import CodeBlock from '../components/CodeBlock.vue';
@@ -12,6 +12,7 @@ import type { IconName } from '../components/BaseIcon.vue';
 import SkeletonRows from '../components/SkeletonRows.vue';
 import TableData from '../components/TableData.vue';
 import { invalidate } from '../composables/catalog';
+import { takeFlash } from '../composables/ddl';
 import { sendToEditor } from '../composables/editorInbox';
 import { findConnection } from '../composables/session';
 import { formatBytes, formatDate, formatNumber } from '../composables/format';
@@ -69,6 +70,17 @@ const alterable = computed(() => {
     return type === 'table' || type === 'partitioned_table';
 });
 const isAdmin = computed(() => findConnection(label.value)?.role === 'admin');
+/** Constraint forms (add, or drop the picked one) and the matview refresh dialog, loaded on first use. */
+const ConstraintForm = defineAsyncComponent(() => import('../components/ConstraintForm.vue'));
+const RefreshMatviewForm = defineAsyncComponent(() => import('../components/RefreshMatviewForm.vue'));
+const constraintFormUsed = ref(false);
+const refreshUsed = ref(false);
+const constraintForm = ref<{ mode: 'add' | 'drop'; constraint?: Constraint } | null>(null);
+const refreshOpen = ref(false);
+/** Bumped after a schema change, so the Data tab reloads (e.g. a refreshed matview). */
+const dataVersion = ref(0);
+watch(() => constraintForm.value, (form) => (constraintFormUsed.value ||= form !== null));
+watch(() => refreshOpen.value, (open) => (refreshUsed.value ||= open));
 
 const tabs = computed<Tab[]>(() => {
     if (isFunction.value) {
@@ -258,6 +270,27 @@ function onDdlClose(outcome: DdlOutcome | null): void {
     void loadObject();
 }
 
+/**
+ * After a constraint form or a matview refresh: the cached constraints (and
+ * the tab's data) are stale. A background run gets the queued-run notice.
+ */
+function onSchemaChange(done: { title: string; run?: number } | null): void {
+    constraintForm.value = null;
+    refreshOpen.value = false;
+
+    if (!done) {
+        return;
+    }
+
+    invalidate(label.value);
+    notice.value = done.run !== undefined
+        ? { text: `${done.title} was queued as background run #${done.run}: it can't run inside a transaction.`, run: done.run }
+        : { text: `${done.title}: done.` };
+    tabData.value = {};
+    dataVersion.value++;
+    void loadTab();
+}
+
 /** A rename navigates to the new name: its notice survives that one move. */
 let keepNotice = false;
 
@@ -268,6 +301,8 @@ watch(
             notice.value = null;
         }
         keepNotice = false;
+        // Set by a create form that navigated here.
+        notice.value = takeFlash() ?? notice.value;
         void loadObject();
     },
     { immediate: true },
@@ -293,6 +328,9 @@ watch(activeTab, () => void loadTab());
                 </button>
                 <button v-if="isAdmin && alterable" type="button" class="dbx-btn" title="Add, rename or drop columns and indexes, or drop the table" @click="ddlOpen = true">
                     <BaseIcon name="sliders" />Alter table
+                </button>
+                <button v-if="isAdmin && object?.type === 'materialized_view'" type="button" class="dbx-btn" title="Re-run the view's query and store the new rows" @click="refreshOpen = true">
+                    <BaseIcon name="refresh" />Refresh
                 </button>
             </div>
             <p v-if="object?.comment || fn?.comment" class="w-full text-sm text-fg-muted">{{ object?.comment ?? fn?.comment }}</p>
@@ -349,7 +387,7 @@ watch(activeTab, () => void loadTab());
                 class="flex min-h-0 flex-1 flex-col"
                 :class="activeTab === 'data' ? '' : 'overflow-auto'"
             >
-                <TableData v-if="activeTab === 'data'" :label="label" :schema="schema" :name="name" :importable="alterable" />
+                <TableData v-if="activeTab === 'data'" :key="dataVersion" :label="label" :schema="schema" :name="name" :importable="alterable" />
 
                 <div v-else class="p-4">
                     <SkeletonRows v-if="tabLoading" :rows="6" :columns="activeTab === 'stats' ? 2 : 4" />
@@ -406,10 +444,14 @@ watch(activeTab, () => void loadTab());
                     </template>
 
                     <template v-else-if="activeTab === 'constraints' && constraints">
+                        <div v-if="isAdmin && alterable" class="mb-3 flex items-center gap-2">
+                            <button type="button" class="dbx-btn" @click="constraintForm = { mode: 'add' }"><BaseIcon name="plus" />Add constraint</button>
+                            <span class="text-xs text-fg-subtle">Primary key, unique, check or foreign key.</span>
+                        </div>
                         <EmptyState v-if="constraints.length === 0" icon="key" title="No constraints" />
                         <div v-else class="dbx-card overflow-x-auto">
                             <table class="dbx-table">
-                                <thead><tr><th>Name</th><th>Type</th><th>Columns</th><th>References</th><th>Definition</th></tr></thead>
+                                <thead><tr><th>Name</th><th>Type</th><th>Columns</th><th>References</th><th>Definition</th><th v-if="isAdmin && alterable"><span class="sr-only">Actions</span></th></tr></thead>
                                 <tbody>
                                     <tr v-for="constraint in constraints" :key="constraint.name">
                                         <td class="font-medium">{{ constraint.name }}</td>
@@ -422,6 +464,16 @@ watch(activeTab, () => void loadTab());
                                             <span v-else-if="constraint.type === 'foreign_key'" class="inline-flex items-center gap-1 text-xs text-fg-subtle" title="The referenced table is hidden"><BaseIcon name="lock" :size="12" />hidden table</span>
                                         </td>
                                         <td class="font-mono text-xs text-fg-muted">{{ constraint.definition }}</td>
+                                        <td v-if="isAdmin && alterable" class="w-px text-right whitespace-nowrap">
+                                            <button
+                                                type="button"
+                                                class="dbx-btn dbx-btn-danger-ghost dbx-btn-sm"
+                                                :aria-label="`Drop constraint ${constraint.name}`"
+                                                @click="constraintForm = { mode: 'drop', constraint }"
+                                            >
+                                                <BaseIcon name="trash" />Drop
+                                            </button>
+                                        </td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -482,6 +534,18 @@ watch(activeTab, () => void loadTab());
                 </div>
             </section>
         </template>
+
+        <ConstraintForm
+            v-if="constraintFormUsed"
+            :open="constraintForm !== null"
+            :mode="constraintForm?.mode ?? 'add'"
+            :label="label"
+            :schema="schema"
+            :table="name"
+            :constraint="constraintForm?.constraint ?? null"
+            @close="onSchemaChange"
+        />
+        <RefreshMatviewForm v-if="refreshUsed" :open="refreshOpen" :label="label" :schema="schema" :name="name" @close="onSchemaChange" />
 
         <DdlForm
             :open="ddlOpen"

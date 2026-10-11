@@ -96,10 +96,30 @@ it('inserts a row and returns it with masked columns masked', function () {
         ->and($audit->sql)->toBe("INSERT INTO \"{$this->schema}\".\"notes\" (\"title\", \"body\") VALUES (CAST(? AS text), CAST(? AS text)) RETURNING \"id\", \"title\", \"body\", \"password\", \"slug\"");
 });
 
-it('inserts default values when no values are given', function () {
+it('inserts a row of column defaults only when defaults: true is sent', function () {
     DB::connection('pgsql_admin')->statement("ALTER TABLE {$this->schema}.notes ALTER COLUMN title SET DEFAULT 'untitled'");
 
-    expect(rowWrite($this, 'editor', 'POST', 'notes', [])->assertCreated()->json('data.row.title'))->toBe('untitled');
+    expect(rowWrite($this, 'editor', 'POST', 'notes', ['defaults' => true])->assertCreated()->json('data.row.title'))->toBe('untitled')
+        ->and(rowWrite($this, 'editor', 'POST', 'notes', ['values' => [], 'defaults' => true, 'preview' => true])->assertOk()->json('data.sql'))
+        ->toBe("INSERT INTO \"{$this->schema}\".\"notes\" DEFAULT VALUES RETURNING \"id\", \"title\", \"body\", \"password\", \"slug\"");
+});
+
+it('F25d answers 422 for an insert with no values unless defaults: true is sent, and writes nothing', function (array $body) {
+    rowWrite($this, 'editor', 'POST', 'notes', $body)
+        ->assertStatus(422)
+        ->assertJsonPath('errors.values.0', 'Give at least one value, or send defaults: true to insert a row of column defaults.');
+
+    expect(DB::connection('pgsql_super')->selectOne("SELECT count(*) AS n FROM {$this->schema}.notes")->n)->toBe(2)
+        ->and(AuditEntry::query()->count())->toBe(0);
+})->with([
+    'no values key' => [[]],
+    'empty values' => [['values' => []]],
+    'defaults false' => [['values' => [], 'defaults' => false]],
+    'preview' => [['values' => [], 'preview' => true]],
+]);
+
+it('F25d rejects a defaults flag that is not a boolean', function () {
+    rowWrite($this, 'editor', 'POST', 'notes', ['defaults' => 'yes please'])->assertStatus(422)->assertJsonValidationErrors('defaults');
 });
 
 it('masks an inserted value in a masked column in the response', function () {
@@ -182,6 +202,47 @@ it('answers 409 when a row to delete changed, and 409 with no current row when i
     rowWrite($this, 'editor', 'PATCH', 'notes', ['key' => ['id' => 1], 'original' => ['body' => 'one'], 'changes' => ['body' => 'x']])
         ->assertStatus(409)
         ->assertJsonPath('current', null);
+});
+
+it('F25c overwrites after a conflict with the current row as the original, still checked, and audits the overwrite', function () {
+    DB::connection('pgsql_super')->update("UPDATE {$this->schema}.notes SET body = 'changed elsewhere' WHERE id = 1");
+
+    $current = rowWrite($this, 'editor', 'PATCH', 'notes', ['key' => ['id' => 1], 'original' => ['body' => 'one'], 'changes' => ['body' => 'mine']])
+        ->assertStatus(409)
+        ->json('current');
+
+    // Another change lands between the 409 and the overwrite: still a 409.
+    DB::connection('pgsql_super')->update("UPDATE {$this->schema}.notes SET body = 'changed again' WHERE id = 1");
+
+    rowWrite($this, 'editor', 'PATCH', 'notes', ['key' => ['id' => 1], 'original' => ['body' => $current['body']], 'changes' => ['body' => 'mine'], 'overwrite' => true])
+        ->assertStatus(409)
+        ->assertJsonPath('current.body', 'changed again');
+
+    rowWrite($this, 'editor', 'PATCH', 'notes', ['key' => ['id' => 1], 'original' => ['body' => 'changed again'], 'changes' => ['body' => 'mine'], 'overwrite' => true])
+        ->assertOk()
+        ->assertJsonPath('data.row.body', 'mine');
+
+    expect(noteRow($this, 1)['body'])->toBe('mine');
+
+    $audits = AuditEntry::query()->orderBy('id')->get();
+
+    expect($audits->pluck('outcome')->all())->toBe(['conflict', 'conflict', 'success'])
+        ->and($audits[0]->meta)->toEqual(['table' => "{$this->schema}.notes", 'key' => ['id' => '1']])
+        ->and($audits[1]->meta)->toEqual(['table' => "{$this->schema}.notes", 'key' => ['id' => '1'], 'overwrite' => true])
+        ->and($audits[2]->action)->toBe('row.update')
+        ->and($audits[2]->meta)->toEqual(['table' => "{$this->schema}.notes", 'key' => ['id' => '1'], 'overwrite' => true]);
+});
+
+it('F25c only marks updates as overwrites, and rejects an overwrite flag that is not a boolean', function () {
+    rowWrite($this, 'editor', 'POST', 'notes', ['values' => ['title' => 'x'], 'overwrite' => true])->assertCreated();
+
+    expect(AuditEntry::query()->sole()->meta)->not->toHaveKey('overwrite');
+
+    rowWrite($this, 'editor', 'PATCH', 'notes', ['key' => ['id' => 1], 'original' => ['body' => 'one'], 'changes' => ['body' => 'x'], 'overwrite' => 'yes'])
+        ->assertStatus(422)
+        ->assertJsonValidationErrors('overwrite');
+
+    expect(noteRow($this, 1)['body'])->toBe('one');
 });
 
 it('matches NULL originals', function () {

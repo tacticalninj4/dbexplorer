@@ -3,7 +3,7 @@ import { onBeforeUnmount, ref } from 'vue';
 import BaseIcon from './BaseIcon.vue';
 
 // Read-only SQL or text with a copy button. Text interpolation only (S15).
-const props = withDefaults(defineProps<{ code: string; copyLabel?: string }>(), { copyLabel: 'Copy' });
+const props = withDefaults(defineProps<{ code: string; copyLabel?: string; wrap?: boolean }>(), { copyLabel: 'Copy', wrap: false });
 
 const state = ref<'idle' | 'copied' | 'failed'>('idle');
 const pre = ref<HTMLElement | null>(null);
@@ -35,6 +35,6 @@ onBeforeUnmount(() => clearTimeout(timer));
             <BaseIcon :name="state === 'copied' ? 'check' : 'copy'" />{{ state === 'copied' ? 'Copied' : state === 'failed' ? 'Press Ctrl+C' : copyLabel }}
         </button>
         <span class="sr-only" aria-live="polite">{{ state === 'copied' ? 'Copied to clipboard' : '' }}</span>
-        <pre ref="pre" class="dbx-code max-h-[60vh] pr-32">{{ code }}</pre>
+        <pre ref="pre" class="dbx-code max-h-[60vh] pr-32" :class="wrap ? 'whitespace-pre-wrap break-words' : ''">{{ code }}</pre>
     </div>
 </template>

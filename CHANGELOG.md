@@ -14,7 +14,7 @@ Every feature below works through the JSON API. The browser UI covers M0–M2 an
 - Append-only, HMAC hash-chained audit log (S17–S19, S22) with `dbx:audit:verify`, `dbx:prune` checkpoints and `dbx:install`.
 
 ### Writes (M2)
-- Inline row insert/edit/delete with optimistic concurrency (409 carries the current row), SQL preview before anything runs, and masked columns never editable.
+- Inline row insert/edit/delete with optimistic concurrency (409 carries the current row), SQL preview before anything runs, and masked columns never editable. An insert needs at least one value, or `defaults: true` to insert a row of column defaults (422 otherwise). After a 409 the editor offers a field-level diff and "Overwrite with mine", which re-saves against the current row (still conflict-checked) and is marked `overwrite` in the audit log.
 - DML and DDL in the editor behind a server-driven confirmation ladder (409 confirm → 423 password re-confirmation, S5), with the database grants, not the classifier, as the real boundary (proven by evasion tests). Users without a stored password (SSO-only) can't confirm, so can't run destructive actions.
 - Schema forms with generated SQL, copy-as-migration, and `CREATE INDEX CONCURRENTLY` queued as a background run.
 

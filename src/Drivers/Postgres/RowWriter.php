@@ -75,9 +75,11 @@ final class RowWriter
 
     /**
      * Insert a row from `$values` (column => value; omitted columns get their
-     * default). Returns `['row' => …]`, the new row, or `['sql' => …]` for a preview.
+     * default). An empty `$values` is a 422 unless `defaults` is set, so an
+     * empty form can't insert a row of defaults by accident (F25d). Returns
+     * `['row' => …]`, the new row, or `['sql' => …]` for a preview.
      *
-     * @param  array{unmask?: bool, preview?: bool}  $options
+     * @param  array{unmask?: bool, preview?: bool, defaults?: bool}  $options
      * @return array{row: array<string, mixed>}|array{sql: string}
      *
      * @throws ObjectNotFoundException|ValidationException|AuthorizationException|QueryFailed
@@ -86,6 +88,10 @@ final class RowWriter
     {
         $target = $this->target($connection, $role, $schema, $table, (bool) ($options['unmask'] ?? false));
         $values = $this->values($target, $values, 'values');
+
+        if ($values === [] && ! (bool) ($options['defaults'] ?? false)) {
+            throw self::invalid('values', 'Give at least one value, or send defaults: true to insert a row of column defaults.');
+        }
 
         $build = function (Closure $param) use ($target, $values): string {
             if ($values === []) {
@@ -109,7 +115,11 @@ final class RowWriter
      * Update the row whose primary key is `$key` with `$changes`, provided
      * each edited column still holds its value in `$original`.
      *
-     * @param  array{unmask?: bool, preview?: bool}  $options
+     * `overwrite` marks a deliberate "overwrite with mine" after a conflict:
+     * `$original` is then the row the 409 returned, still checked as usual,
+     * and the audit entry gets `meta.overwrite` (F25c). It changes no check.
+     *
+     * @param  array{unmask?: bool, preview?: bool, overwrite?: bool}  $options
      * @return array{row: array<string, mixed>}|array{sql: string}
      *
      * @throws ObjectNotFoundException|ValidationException|AuthorizationException|QueryFailed|RowConflict
@@ -168,7 +178,7 @@ final class RowWriter
      * @param  Target  $target
      * @param  array<string, string>|null  $key  the primary key of the row to change, null for an insert
      * @param  Closure(Closure(string|null, string): string): string  $build
-     * @param  array{unmask?: bool, preview?: bool}  $options
+     * @param  array{unmask?: bool, preview?: bool, defaults?: bool, overwrite?: bool}  $options
      * @return array{row: array<string, mixed>|null}|array{sql: string}
      */
     private function run(string $connection, string $role, string $operation, array $target, ?array $key, Closure $build, array $options): array
@@ -236,6 +246,7 @@ final class RowWriter
                 'table' => $target['schema'].'.'.$target['table'],
                 'key' => $auditKey === [] ? null : $auditKey,
                 'unmasked' => $target['unmask'] ? true : null,
+                'overwrite' => $operation === self::UPDATE && (bool) ($options['overwrite'] ?? false) ? true : null,
                 'sqlstate' => $failure?->sqlState,
             ], fn (mixed $value): bool => $value !== null),
         ]);
