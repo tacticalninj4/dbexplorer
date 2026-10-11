@@ -24,6 +24,7 @@ const links: { name: string; title: string; icon: IconName }[] = [
 
 // batch 4A: editor+ screens (the API enforces the role; this only hides the links).
 const batch4aLinks: { name: string; title: string; icon: IconName; min: Role }[] = [
+    { name: 'scripts', title: 'Scripts', icon: 'file', min: 'editor' },
     { name: 'import', title: 'Import CSV', icon: 'upload', min: 'editor' },
 ];
 const navLinks = computed(() => [...links, ...batch4aLinks.filter((link) => hasRole(label.value, link.min))]);
