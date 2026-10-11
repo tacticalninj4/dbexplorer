@@ -390,10 +390,14 @@ watch(() => route.fullPath, revealCurrent);
 
 // A schema change elsewhere (DDL form) dropped cached objects: reload what's open.
 watch(catalog.catalogVersion, () => {
-    for (const schema of Object.keys(objects.value)) {
+    const reloads = Object.keys(objects.value).map((schema) => {
         delete objects.value[schema];
-        void loadSchema(schema);
-    }
+
+        return loadSchema(schema);
+    });
+
+    // A create form may have navigated to the new object meanwhile: show it.
+    void Promise.all(reloads).then(revealCurrent);
 });
 
 // Create menu (admins): New table / view / materialized view in a schema.

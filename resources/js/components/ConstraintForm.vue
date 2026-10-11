@@ -121,7 +121,7 @@ async function execute(): Promise<void> {
         :open="open"
         :title="title"
         :description="mode === 'add' ? 'Pick the kind of constraint and its columns, review the SQL, then add it. Adding fails if existing rows break the rule.' : `On ${schema}.${table}. Review the SQL before anything runs.`"
-        :wide="mode === 'add'"
+        wide
         @close="emit('close', null)"
     >
         <form class="space-y-4" novalidate @submit.prevent="build">

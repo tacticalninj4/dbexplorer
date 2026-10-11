@@ -77,6 +77,8 @@ const constraintFormUsed = ref(false);
 const refreshUsed = ref(false);
 const constraintForm = ref<{ mode: 'add' | 'drop'; constraint?: Constraint } | null>(null);
 const refreshOpen = ref(false);
+/** Bumped after a schema change, so the Data tab reloads (e.g. a refreshed matview). */
+const dataVersion = ref(0);
 watch(() => constraintForm.value, (form) => (constraintFormUsed.value ||= form !== null));
 watch(() => refreshOpen.value, (open) => (refreshUsed.value ||= open));
 
@@ -285,6 +287,7 @@ function onSchemaChange(done: { title: string; run?: number } | null): void {
         ? { text: `${done.title} was queued as background run #${done.run}: it can't run inside a transaction.`, run: done.run }
         : { text: `${done.title}: done.` };
     tabData.value = {};
+    dataVersion.value++;
     void loadTab();
 }
 
@@ -384,7 +387,7 @@ watch(activeTab, () => void loadTab());
                 class="flex min-h-0 flex-1 flex-col"
                 :class="activeTab === 'data' ? '' : 'overflow-auto'"
             >
-                <TableData v-if="activeTab === 'data'" :label="label" :schema="schema" :name="name" />
+                <TableData v-if="activeTab === 'data'" :key="dataVersion" :label="label" :schema="schema" :name="name" />
 
                 <div v-else class="p-4">
                     <SkeletonRows v-if="tabLoading" :rows="6" :columns="activeTab === 'stats' ? 2 : 4" />

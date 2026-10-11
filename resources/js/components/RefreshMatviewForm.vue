@@ -63,7 +63,7 @@ async function execute(): Promise<void> {
 </script>
 
 <template>
-    <ModalDialog :open="open" :title="`Refresh ${schema}.${name}`" description="Re-runs the view's query and replaces its stored rows." @close="emit('close', null)">
+    <ModalDialog :open="open" :title="`Refresh ${schema}.${name}`" description="Re-runs the view's query and replaces its stored rows." wide @close="emit('close', null)">
         <form class="space-y-4" @submit.prevent="build">
             <label class="dbx-check items-start">
                 <input v-model="concurrently" type="checkbox" class="mt-0.5">
