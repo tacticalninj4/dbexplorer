@@ -2,8 +2,8 @@
 import { computed, ref, watch } from 'vue';
 import { api, describeError, segment } from '../api';
 import type { DdlPreview } from '../types';
-import CodeBlock from './CodeBlock.vue';
 import BaseIcon from './BaseIcon.vue';
+import DdlPreviewPanel from './DdlPreviewPanel.vue';
 import ModalDialog from './ModalDialog.vue';
 
 /**
@@ -230,14 +230,7 @@ async function execute(): Promise<void> {
             <div v-if="error" role="alert" class="dbx-callout dbx-callout-danger"><BaseIcon name="alert-circle" /><span>{{ error }}</span></div>
 
             <template v-if="preview">
-                <div>
-                    <p class="dbx-label">SQL</p>
-                    <CodeBlock :code="preview.statements.map((statement) => statement.sql).join(';\n')" copy-label="Copy SQL" />
-                </div>
-                <div v-if="preview.migration">
-                    <p class="dbx-label">Laravel migration</p>
-                    <CodeBlock :code="preview.migration" copy-label="Copy migration" />
-                </div>
+                <DdlPreviewPanel :preview="preview" />
                 <div v-if="meta?.destructive && consequence" class="dbx-callout dbx-callout-danger">
                     <BaseIcon name="alert" />
                     <span>{{ consequence }} This can't be undone from DbExplorer. You'll be asked for your password.</span>

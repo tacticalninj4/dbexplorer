@@ -1,16 +1,14 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api, ApiError, describeError, segment } from '../api';
 import CodeBlock from '../components/CodeBlock.vue';
 import BaseBadge from '../components/BaseBadge.vue';
-import ConstraintForm from '../components/ConstraintForm.vue';
 import DdlForm from '../components/DdlForm.vue';
 import type { DdlOutcome } from '../components/DdlForm.vue';
 import EmptyState from '../components/EmptyState.vue';
 import BaseIcon from '../components/BaseIcon.vue';
 import type { IconName } from '../components/BaseIcon.vue';
-import RefreshMatviewForm from '../components/RefreshMatviewForm.vue';
 import SkeletonRows from '../components/SkeletonRows.vue';
 import TableData from '../components/TableData.vue';
 import { invalidate } from '../composables/catalog';
@@ -72,9 +70,15 @@ const alterable = computed(() => {
     return type === 'table' || type === 'partitioned_table';
 });
 const isAdmin = computed(() => findConnection(label.value)?.role === 'admin');
-/** Constraint forms (add, or drop the picked one) and the matview refresh dialog. */
+/** Constraint forms (add, or drop the picked one) and the matview refresh dialog, loaded on first use. */
+const ConstraintForm = defineAsyncComponent(() => import('../components/ConstraintForm.vue'));
+const RefreshMatviewForm = defineAsyncComponent(() => import('../components/RefreshMatviewForm.vue'));
+const constraintFormUsed = ref(false);
+const refreshUsed = ref(false);
 const constraintForm = ref<{ mode: 'add' | 'drop'; constraint?: Constraint } | null>(null);
 const refreshOpen = ref(false);
+watch(() => constraintForm.value, (form) => (constraintFormUsed.value ||= form !== null));
+watch(() => refreshOpen.value, (open) => (refreshUsed.value ||= open));
 
 const tabs = computed<Tab[]>(() => {
     if (isFunction.value) {
@@ -529,6 +533,7 @@ watch(activeTab, () => void loadTab());
         </template>
 
         <ConstraintForm
+            v-if="constraintFormUsed"
             :open="constraintForm !== null"
             :mode="constraintForm?.mode ?? 'add'"
             :label="label"
@@ -537,7 +542,7 @@ watch(activeTab, () => void loadTab());
             :constraint="constraintForm?.constraint ?? null"
             @close="onSchemaChange"
         />
-        <RefreshMatviewForm :open="refreshOpen" :label="label" :schema="schema" :name="name" @close="onSchemaChange" />
+        <RefreshMatviewForm v-if="refreshUsed" :open="refreshOpen" :label="label" :schema="schema" :name="name" @close="onSchemaChange" />
 
         <DdlForm
             :open="ddlOpen"
