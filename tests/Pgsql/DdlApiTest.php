@@ -2,10 +2,13 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Testing\TestResponse;
+use Symfony\Component\Process\Process;
 use TacticalNinj4\DbExplorer\Drivers\Postgres\QueryRunner;
 use TacticalNinj4\DbExplorer\Events\DdlExecuted;
 use TacticalNinj4\DbExplorer\Events\QueryExecuted;
@@ -41,6 +44,28 @@ function relationExists(string $name): bool
     return DB::connection('pgsql_super')->selectOne('SELECT to_regclass(?) IS NOT NULL AS present', [$name])->present;
 }
 
+/**
+ * A materialized view `note_ids` over `notes` with a unique index (so it can
+ * be refreshed CONCURRENTLY), holding the one note there is now. Returns the
+ * view's qualified name.
+ */
+function noteIdsView(string $schema): string
+{
+    DB::connection('pgsql_admin')->unprepared(<<<SQL
+        INSERT INTO {$schema}.notes (body) VALUES ('first');
+        CREATE MATERIALIZED VIEW {$schema}.note_ids AS SELECT id FROM {$schema}.notes;
+        CREATE UNIQUE INDEX note_ids_id ON {$schema}.note_ids (id);
+        INSERT INTO {$schema}.notes (body) VALUES ('second');
+        SQL);
+
+    return "{$schema}.note_ids";
+}
+
+function viewRows(string $view): int
+{
+    return (int) DB::connection('pgsql_super')->selectOne("SELECT count(*) AS n FROM {$view}")->n;
+}
+
 beforeEach(function () {
     app()['env'] = 'local';
 
@@ -66,12 +91,14 @@ it('previews the statements and a migration snippet without running anything', f
             'sql' => "CREATE TABLE \"{$this->schema}\".\"widgets\" (\n    \"id\" bigserial PRIMARY KEY,\n    \"label\" character varying(80) NOT NULL\n)",
             'classification' => 'ddl',
             'transactional' => true,
+            'background' => false,
             'raw_expressions' => false,
         ],
         [
             'sql' => "COMMENT ON COLUMN \"{$this->schema}\".\"widgets\".\"label\" IS 'Shown to users'",
             'classification' => 'ddl',
             'transactional' => true,
+            'background' => false,
             'raw_expressions' => false,
         ],
     ])
@@ -241,6 +268,154 @@ it('S5 still demands a password confirmation before queueing destructive CONCURR
         ->assertStatus(202);
 
     expect(Run::query()->sole()->meta['mode'])->toBe('step');
+});
+
+it('F27 queues every materialized view refresh as a script run instead of refreshing it in the request', function (bool $concurrently) {
+    Queue::fake();
+    $view = noteIdsView($this->schema);
+
+    $data = ddlAs($this, 'admin', 'execute', ['op' => 'refresh_materialized_view', 'schema' => $this->schema, 'name' => 'note_ids'] + ($concurrently ? ['concurrently' => true] : []), false)
+        ->assertStatus(202)
+        ->json('data');
+
+    $run = Run::query()->sole();
+
+    expect($data['statements'])->toHaveCount(1)
+        ->and($data['statements'][0])->toMatchArray(['transactional' => true, 'background' => true])
+        ->and($data['statements'][0]['sql'])->toBe('REFRESH MATERIALIZED VIEW '.($concurrently ? 'CONCURRENTLY ' : '')."\"{$this->schema}\".\"note_ids\"")
+        ->and($data['run']['id'])->toBe($run->id)
+        ->and($run->type)->toBe('script')
+        ->and($run->status)->toBe(RunStatus::QUEUED)
+        ->and($run->role)->toBe('admin')
+        // One statement that a transaction can hold: no need for step mode.
+        ->and($run->meta['mode'])->toBe('transaction')
+        ->and($run->meta['source'])->toBe('ddl')
+        ->and($run->meta['sql'])->toBe($data['statements'][0]['sql'])
+        // Nothing ran in the request: the view still has the old row only.
+        ->and(viewRows($view))->toBe(1)
+        ->and(AuditEntry::query()->count())->toBe(0);
+
+    Queue::assertPushed(RunScript::class, fn (RunScript $job): bool => $job->runId === $run->id);
+})->with(['concurrently' => true, 'plain' => false]);
+
+it('F27 refreshes the materialized view in the queued run, audited, with DdlExecuted', function (bool $concurrently) {
+    Queue::fake();
+    Event::fake([DdlExecuted::class]);
+    createUsers(1);
+    $view = noteIdsView($this->schema);
+
+    $sql = ddlAs($this, 'admin', 'execute', ['op' => 'refresh_materialized_view', 'schema' => $this->schema, 'name' => 'note_ids'] + ($concurrently ? ['concurrently' => true] : []), false)
+        ->assertStatus(202)
+        ->json('data.statements.0.sql');
+
+    $run = Run::query()->sole();
+
+    app()->call([new RunScript($run->id), 'handle']);
+
+    $audit = AuditEntry::query()->where('action', 'script')->sole();
+
+    expect($run->refresh()->status)->toBe(RunStatus::SUCCEEDED)
+        ->and($run->pid)->toBeNull()
+        ->and($run->meta['statements'][0]['status'])->toBe('succeeded')
+        ->and(viewRows($view))->toBe(2)
+        ->and($audit->outcome)->toBe('success')
+        ->and($audit->role)->toBe('admin')
+        ->and($audit->sql)->toBe($sql)
+        ->and($audit->meta)->toMatchArray(['run_id' => $run->id, 'mode' => 'transaction']);
+
+    Event::assertDispatched(DdlExecuted::class, fn (DdlExecuted $event): bool => $event->auditId === $audit->id && $event->sql === $sql && $event->role === 'admin');
+})->with(['concurrently' => true, 'plain' => false]);
+
+it('F27 forbids viewers and editors from refreshing a materialized view, queueing nothing', function (string $role) {
+    Queue::fake();
+    $view = noteIdsView($this->schema);
+
+    ddlAs($this, $role, 'execute', ['op' => 'refresh_materialized_view', 'schema' => $this->schema, 'name' => 'note_ids', 'concurrently' => true])
+        ->assertForbidden()
+        ->assertJsonPath('message', 'Only admins can change the schema.');
+
+    expect(Run::query()->count())->toBe(0)
+        ->and(viewRows($view))->toBe(1);
+
+    Queue::assertNothingPushed();
+})->with(['viewer', 'editor']);
+
+it('F27 cancels a materialized view refresh mid-statement, with a real queue worker', function () {
+    Schema::create('jobs', function (Blueprint $table): void {
+        $table->id();
+        $table->string('queue')->index();
+        $table->longText('payload');
+        $table->unsignedTinyInteger('attempts');
+        $table->unsignedInteger('reserved_at')->nullable();
+        $table->unsignedInteger('available_at')->index();
+        $table->unsignedInteger('created_at')->index();
+    });
+    Schema::create('failed_jobs', function (Blueprint $table): void {
+        $table->id();
+        $table->string('uuid')->unique();
+        $table->text('connection');
+        $table->text('queue');
+        $table->longText('payload');
+        $table->longText('exception');
+        $table->timestamp('failed_at')->useCurrent();
+    });
+    config(['queue.default' => 'database']);
+    createUsers(1);
+
+    // A view whose query sleeps as long as `pace` says: instant to create,
+    // 30 s to refresh.
+    DB::connection('pgsql_admin')->unprepared(<<<SQL
+        CREATE TABLE {$this->schema}.pace (secs float8 NOT NULL);
+        INSERT INTO {$this->schema}.pace VALUES (0);
+        CREATE MATERIALIZED VIEW {$this->schema}.slow AS SELECT 1 AS id FROM {$this->schema}.pace, pg_sleep(pace.secs);
+        CREATE UNIQUE INDEX slow_id ON {$this->schema}.slow (id);
+        UPDATE {$this->schema}.pace SET secs = 30;
+        SQL);
+
+    ddlAs($this, 'admin', 'execute', ['op' => 'refresh_materialized_view', 'schema' => $this->schema, 'name' => 'slow', 'concurrently' => true], false)
+        ->assertStatus(202);
+
+    $run = Run::query()->sole();
+    $started = microtime(true);
+
+    $worker = new Process(
+        [PHP_BINARY, __DIR__.'/scripts/work-one-job.php'],
+        null,
+        ['TEST_TOKEN' => getenv('TEST_TOKEN') ?: '', 'DBX_TEST_ROLE' => 'admin'],
+        null,
+        90,
+    );
+    $worker->start();
+
+    // Wait until the stored pid's backend is inside the refresh's sleep.
+    $deadline = microtime(true) + 30;
+    $sleeping = [];
+
+    do {
+        usleep(100000);
+        $fresh = Run::query()->whereKey($run->id)->first(['status', 'pid']);
+        $sleeping = $fresh->pid === null ? [] : DB::connection('pgsql_super')->select('SELECT query FROM pg_stat_activity WHERE pid = ? AND state = ? AND wait_event = ?', [(int) $fresh->pid, 'active', 'PgSleep']);
+    } while ($sleeping === [] && microtime(true) < $deadline);
+
+    expect($sleeping)->not->toBeEmpty('The refresh never started: '.$worker->getErrorOutput().$worker->getOutput())
+        ->and($sleeping[0]->query)->toContain('REFRESH MATERIALIZED VIEW CONCURRENTLY');
+
+    $this->actingAs(makeUser(1))
+        ->withSession(['_token' => 'csrf-test-token'])
+        ->withHeaders(['X-CSRF-TOKEN' => 'csrf-test-token'])
+        ->postJson("/dbexplorer/api/main/runs/{$run->id}/cancel")
+        ->assertStatus(202);
+
+    $worker->wait();
+
+    expect($worker->getExitCode())->toBe(0, $worker->getErrorOutput().$worker->getOutput());
+
+    $run->refresh();
+
+    expect($run->status)->toBe(RunStatus::CANCELLED)
+        ->and($run->meta['statements'][0]['status'])->toBe('cancelled')
+        ->and(microtime(true) - $started)->toBeLessThan(25)
+        ->and(AuditEntry::query()->where('action', 'script')->value('outcome'))->toBe('cancelled');
 });
 
 it('rolls back the first statement when the second fails, and reports which one failed', function () {

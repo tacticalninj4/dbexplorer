@@ -128,7 +128,7 @@ These requirements are non-negotiable, and each needs automated tests.
 ### 7.4 Schema editing (M2)
 - Forms for create, alter and drop on tables, columns, indexes, constraints and views.
 - Every form produces SQL that is **shown before it runs**. The user can copy it, for example into a Laravel migration, instead of executing it.
-- DDL runs in a transaction, since Postgres supports transactional DDL. `CREATE INDEX CONCURRENTLY` is offered as an option and runs as a background job, because it cannot run inside a transaction.
+- DDL runs in a transaction, since Postgres supports transactional DDL. `CREATE INDEX CONCURRENTLY` is offered as an option and runs as a background job, because it cannot run inside a transaction. `REFRESH MATERIALIZED VIEW`, plain or `CONCURRENTLY`, also runs as a background job (in a transaction), because it re-runs the view's whole query and can take minutes (§7.5).
 
 ### 7.5 Background jobs (M3)
 Every long operation becomes a **Run**, a row in `dbx_runs` with a type, status (`queued`, `running`, `succeeded`, `failed`, `cancelled`), progress, timestamps, user, result file and error.

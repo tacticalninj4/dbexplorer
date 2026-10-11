@@ -12,7 +12,7 @@ use TacticalNinj4\DbExplorer\Drivers\Postgres\Introspector;
  * Build $op on pgsql_admin and run its statements one by one, outside a transaction.
  *
  * @param  array<string, mixed>  $op
- * @return list<array{sql: string, classification: string, transactional: bool, raw_expressions: bool}>
+ * @return list<array{sql: string, classification: string, transactional: bool, background: bool, raw_expressions: bool}>
  */
 function executeDdl(array $op): array
 {

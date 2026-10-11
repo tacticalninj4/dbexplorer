@@ -70,14 +70,17 @@ use PDO;
  *   any of them have `raw_expressions` set, so the UI can warn.
  *
  * Every statement comes back as `{sql, classification, transactional,
- * raw_expressions}`. Classification is `destructive` for drops and column type
- * changes (which can rewrite or lose data), `ddl` otherwise. `transactional` is
- * false for CREATE/DROP INDEX CONCURRENTLY, which can't run in a transaction.
+ * background, raw_expressions}`. Classification is `destructive` for drops and
+ * column type changes (which can rewrite or lose data), `ddl` otherwise.
+ * `transactional` is false for CREATE/DROP INDEX CONCURRENTLY, which can't run
+ * in a transaction. `background` is true for those and for every REFRESH
+ * MATERIALIZED VIEW: work that can take minutes, so it runs as a background
+ * run rather than inside the HTTP request (PRD §7.5).
  *
  * Invalid input throws a ValidationException keyed by the field's dot path,
  * e.g. `columns.2.type`.
  *
- * @phpstan-type Statement array{sql: string, classification: string, transactional: bool, raw_expressions: bool}
+ * @phpstan-type Statement array{sql: string, classification: string, transactional: bool, background: bool, raw_expressions: bool}
  */
 class DdlBuilder
 {
@@ -339,7 +342,9 @@ class DdlBuilder
             'create_view' => [$this->statement('CREATE OR REPLACE VIEW '.$this->name($op)." AS\n".$this->raw($op, 'body', '', true))],
             'drop_view' => [$this->statement('DROP VIEW '.$this->name($op).$this->behavior($op), self::DESTRUCTIVE)],
             'create_materialized_view' => [$this->statement('CREATE MATERIALIZED VIEW '.$this->name($op)." AS\n".$this->raw($op, 'body', '', true).($this->flag($op, 'with_data', true) ? '' : "\nWITH NO DATA"))],
-            'refresh_materialized_view' => [$this->statement('REFRESH MATERIALIZED VIEW '.($this->flag($op, 'concurrently') ? 'CONCURRENTLY ' : '').$this->name($op))],
+            // Allowed in a transaction, CONCURRENTLY too, but it re-runs the
+            // view's whole query: a background run, never the HTTP request.
+            'refresh_materialized_view' => [$this->statement('REFRESH MATERIALIZED VIEW '.($this->flag($op, 'concurrently') ? 'CONCURRENTLY ' : '').$this->name($op), background: true)],
             'drop_materialized_view' => [$this->statement('DROP MATERIALIZED VIEW '.$this->name($op).$this->behavior($op), self::DESTRUCTIVE)],
             default => throw self::invalid('op', 'The operation is not supported.'),
         };
@@ -602,12 +607,14 @@ class DdlBuilder
     /**
      * @return Statement
      */
-    protected function statement(string $sql, string $classification = self::DDL, bool $transactional = true, ?bool $raw = null): array
+    protected function statement(string $sql, string $classification = self::DDL, bool $transactional = true, ?bool $raw = null, bool $background = false): array
     {
         return [
             'sql' => $sql,
             'classification' => $classification,
             'transactional' => $transactional,
+            // A statement no transaction can hold always runs in the background.
+            'background' => $background || ! $transactional,
             'raw_expressions' => $raw ?? $this->raw,
         ];
     }

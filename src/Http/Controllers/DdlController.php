@@ -25,7 +25,7 @@ class DdlController
 {
     /**
      * The statements for `op`, nothing runs: `{data: {statements: [{sql,
-     * classification, transactional, raw_expressions}], migration}}`, where
+     * classification, transactional, background, raw_expressions}], migration}}`, where
      * `migration` is a best-effort Laravel `Schema::` snippet or null. An
      * invalid operation (including an unknown type) is a 422.
      *
@@ -46,11 +46,18 @@ class DdlController
      * Build `op` and run its statements in one transaction through the
      * QueryRunner (role timeout, hidden-object check, audit, session reset).
      * Destructive statements need a recent password confirmation (S5, else
-     * 423). A statement that can't run in a transaction (CREATE or DROP INDEX
-     * CONCURRENTLY, REFRESH MATERIALIZED VIEW CONCURRENTLY) is queued instead
-     * as a step-mode script run (202, M3.5) and runs outside any transaction.
-     * A database error is a 422 with the failing statement's index; nothing
-     * was applied.
+     * 423). A database error is a 422 with the failing statement's index;
+     * nothing was applied.
+     *
+     * Long work never runs inside the request (PRD §7.5): when any statement
+     * is marked `background` (CREATE or DROP INDEX CONCURRENTLY, and every
+     * REFRESH MATERIALIZED VIEW, plain or CONCURRENTLY), the operation is
+     * queued instead as a script run (202 with `run`, M3.5). The run's job
+     * tracks the backend pid before the statement (cancel), applies
+     * limits.background.timeout, writes the `script` audit entry and fires
+     * DdlExecuted on success. It runs in step mode, outside any transaction,
+     * when a statement can't run in one (CONCURRENTLY on an index), and in
+     * one transaction otherwise.
      *
      * @throws ValidationException
      * @throws QueryFailed
@@ -63,10 +70,10 @@ class DdlController
             $confirmation->ensureConfirmed($request);
         }
 
-        if (in_array(false, array_column($statements, 'transactional'), true)) {
+        if (in_array(true, array_column($statements, 'background'), true)) {
             $run = Run::queueFor($request, RunScript::TYPE, [
                 'sql' => implode(";\n", array_column($statements, 'sql')),
-                'mode' => RunScript::STEP,
+                'mode' => in_array(false, array_column($statements, 'transactional'), true) ? RunScript::STEP : RunScript::TRANSACTION,
                 'source' => 'ddl',
             ]);
 

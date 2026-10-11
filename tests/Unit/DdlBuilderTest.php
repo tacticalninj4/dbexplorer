@@ -330,6 +330,19 @@ it('marks CONCURRENTLY index statements as not transactional', function () {
         ->and(ddlBuilder()->build(['op' => 'refresh_materialized_view', 'schema' => 'a', 'name' => 'v', 'concurrently' => true])[0]['transactional'])->toBeTrue();
 });
 
+it('marks CONCURRENTLY index statements and every materialized view refresh as background work', function () {
+    $background = fn (array $op): bool => ddlBuilder()->build($op)[0]['background'];
+    $index = ['op' => 'create_index', 'schema' => 'a', 'table' => 't', 'columns' => ['c']];
+    $refresh = ['op' => 'refresh_materialized_view', 'schema' => 'a', 'name' => 'v'];
+
+    expect($background($index))->toBeFalse()
+        ->and($background(['op' => 'drop_table', 'schema' => 'a', 'name' => 't']))->toBeFalse()
+        ->and($background($index + ['concurrently' => true]))->toBeTrue()
+        ->and($background(['op' => 'drop_index', 'schema' => 'a', 'name' => 'i', 'concurrently' => true]))->toBeTrue()
+        ->and($background($refresh))->toBeTrue()
+        ->and($background($refresh + ['concurrently' => true]))->toBeTrue();
+});
+
 it('flags statements that carry raw SQL expressions', function () {
     $raw = fn (array $op): array => array_column(ddlBuilder()->build($op), 'raw_expressions');
 
