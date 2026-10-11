@@ -16,7 +16,8 @@ const props = defineProps<{ preview: DdlPreview }>();
 
 const sql = computed(() => props.preview.statements.map((statement) => `${statement.sql};`).join('\n\n'));
 const raw = computed(() => props.preview.statements.some((statement) => statement.raw_expressions));
-const background = computed(() => props.preview.statements.some((statement) => !statement.transactional));
+const background = computed(() => props.preview.statements.some((statement) => statement.background));
+const outsideTransaction = computed(() => props.preview.statements.some((statement) => !statement.transactional));
 
 function firstLine(text: string): string {
     const line = text.split('\n')[0] ?? '';
@@ -31,7 +32,7 @@ function firstLine(text: string): string {
             <li v-for="(statement, index) in preview.statements" :key="index" class="flex min-w-0 items-center gap-2 text-sm">
                 <span class="w-4 shrink-0 text-right text-xs text-fg-subtle tabular-nums">{{ index + 1 }}</span>
                 <ClassificationBadge :value="statement.classification" />
-                <BaseBadge v-if="!statement.transactional" tone="accent" icon="clock" title="Can't run in a transaction: it is queued as a background run">background run</BaseBadge>
+                <BaseBadge v-if="statement.background" tone="accent" icon="clock" :title="statement.transactional ? 'Can take a long time: it is queued as a background run' : 'Can\'t run in a transaction: it is queued as a background run'">background run</BaseBadge>
                 <BaseBadge v-if="statement.raw_expressions" tone="warning" icon="alert" title="Contains SQL you typed, passed to PostgreSQL as written">raw SQL</BaseBadge>
                 <code class="min-w-0 truncate font-mono text-xs text-fg-muted">{{ firstLine(statement.sql) }}</code>
             </li>
@@ -50,7 +51,7 @@ function firstLine(text: string): string {
         </div>
         <div v-if="background" class="dbx-callout dbx-callout-info">
             <BaseIcon name="clock" />
-            <span>This can't run inside a transaction, so it will be queued as a background run. Follow it on the Runs page.</span>
+            <span>{{ outsideTransaction ? 'This can\'t run inside a transaction' : 'This can take a long time' }}, so it will be queued as a background run. Follow it on the Runs page.</span>
         </div>
     </section>
 </template>

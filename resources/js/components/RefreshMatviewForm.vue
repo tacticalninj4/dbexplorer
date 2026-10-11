@@ -9,8 +9,8 @@ import ModalDialog from './ModalDialog.vue';
 
 /**
  * REFRESH MATERIALIZED VIEW (admins only), optionally CONCURRENTLY, which
- * doesn't lock out readers but needs a unique index. When the server queues
- * it as a background run (202), the page shows the queued-run notice.
+ * doesn't lock out readers but needs a unique index. The server always queues
+ * it as a background run (202), and the page shows the queued-run notice.
  */
 const props = defineProps<{ open: boolean; label: string; schema: string; name: string }>();
 const emit = defineEmits<{ close: [done: { title: string; run?: number } | null] }>();

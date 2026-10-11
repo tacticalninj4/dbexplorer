@@ -209,6 +209,8 @@ export interface DdlStatement {
     classification: 'ddl' | 'destructive';
     /** False for CREATE/DROP INDEX CONCURRENTLY, which cannot run in a transaction. */
     transactional: boolean;
+    /** True when execute queues it as a background run: non-transactional statements and every materialized view refresh. */
+    background: boolean;
     /** True when the statement embeds raw SQL expressions the builder does not parse. */
     raw_expressions: boolean;
 }

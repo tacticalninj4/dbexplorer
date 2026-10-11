@@ -284,7 +284,7 @@ function onSchemaChange(done: { title: string; run?: number } | null): void {
 
     invalidate(label.value);
     notice.value = done.run !== undefined
-        ? { text: `${done.title} was queued as background run #${done.run}: it can't run inside a transaction.`, run: done.run }
+        ? { text: `${done.title} was queued as background run #${done.run}.`, run: done.run }
         : { text: `${done.title}: done.` };
     tabData.value = {};
     dataVersion.value++;
@@ -341,7 +341,7 @@ watch(activeTab, () => void loadTab());
                 <BaseIcon :name="notice.run !== undefined ? 'clock' : 'check-circle'" />
                 <span class="flex-1">
                     {{ notice.text }}
-                    <router-link v-if="notice.run !== undefined" :to="{ name: 'runs', params: { label } }" class="ml-1 font-medium underline underline-offset-2">View runs</router-link>
+                    <router-link v-if="notice.run !== undefined" :to="{ name: 'runs', params: { label }, query: { run: String(notice.run) } }" class="ml-1 font-medium underline underline-offset-2">View run</router-link>
                 </span>
                 <button type="button" class="dbx-btn dbx-btn-ghost dbx-btn-icon dbx-btn-sm -my-0.5 text-current" aria-label="Dismiss" @click="notice = null"><BaseIcon name="x" /></button>
             </div>
