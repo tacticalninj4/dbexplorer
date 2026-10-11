@@ -54,6 +54,10 @@ const ICONS = {
     inbox: ['M2.25 9.25 4 3.25h8l1.75 6v3.5H2.25Z', 'M2.25 9.25h3.5l.75 1.5h3l.75-1.5h3.5'],
     ban: ['c:8 8 5.75', 'M3.95 3.95l8.1 8.1'],
     clock: ['c:8 8 5.75', 'M8 5v3l2 1.25'],
+    // batch 4A
+    upload: ['M8 10.5v-8', 'M4.5 6 8 2.5 11.5 6', 'M2.75 13.25h10.5'],
+    file: ['M9.25 1.75H4.5c-.69 0-1.25.56-1.25 1.25v10c0 .69.56 1.25 1.25 1.25h7c.69 0 1.25-.56 1.25-1.25V5.25Z', 'M9.25 1.75v3.5h3.5', 'M5.5 8.5h5', 'M5.5 11h3.5'],
+    // end batch 4A
 } as const satisfies Record<string, readonly string[]>;
 
 export type IconName = keyof typeof ICONS;

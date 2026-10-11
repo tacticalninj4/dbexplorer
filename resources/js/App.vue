@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import BaseIcon from './components/BaseIcon.vue';
 import PasswordConfirmModal from './components/PasswordConfirmModal.vue';
 import RoleBadge from './components/RoleBadge.vue';
+import RunToasts from './components/RunToasts.vue';
 import { user } from './config';
 import { useSession } from './composables/session';
 
@@ -85,5 +86,6 @@ const initials = computed(() =>
         </main>
 
         <PasswordConfirmModal />
+        <RunToasts />
     </div>
 </template>
