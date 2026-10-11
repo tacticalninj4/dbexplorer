@@ -4,7 +4,7 @@
 |---|---|
 | Verified commit | `2c53133` (main, 2026-10-10) |
 | Sources | Release verifier (test matrix, traceability, docs), independent security audit, end-to-end browser test |
-| Status | 23 fixes **applied** (batches 1–3) + F25 (all) · **in progress:** F24 (batch 4C merged; 4A/4B pending) · **open:** F27 |
+| Status | 23 fixes **applied** (batches 1–3) + F25 (all) · **in progress:** F24 (4C, 4B merged; 4A pending) · **open:** F27–F31 |
 
 ## How to read this
 
@@ -422,7 +422,7 @@ The full Laravel 9–13 matrix last ran at `4183940`, and batch 3 adds only test
 
 ## 4. UI (Batch 4)
 
-### F24 — HIGH (scope) — Most M3/M4 features have no screens · IN PROGRESS (4C merged; 4B, 4A pending)
+### F24 — HIGH (scope) — Most M3/M4 features have no screens · IN PROGRESS (4C, 4B merged; 4A pending)
 **Evidence.**
 - The SPA has no screens for:
   - export
@@ -476,6 +476,29 @@ The full Laravel 9–13 matrix last ran at `4183940`, and batch 3 adds only test
   - on Laravel 9 / PHP 8.0, the RowWriter and Feature suites pass
   - every flow passed in the browser, with no console errors or CSP violations
   - screenshots and GIF are in `~/Downloads/dbx-batch4/4c/`
+
+### Batch 4B — applied (`7ec6379` … `8b42c38`, 2026-10-12)
+- **New screens:**
+  - **Saved queries** (`/:label/queries`, every role): typed `:param` editor, run with a typed form, and a "Save query" button in the SQL editor.
+  - **Schedules** (admin): the snapshot SQL read-only, `allow_writes`/`allow_ddl` toggles that ask for the password, a resync diff before re-approving, approval of backfilled schedules, and a plain-language preview of the cron expression.
+  - **Backups** (admin): Create is disabled with the preflight's reason when it fails. Restore is shown only as a CLI command to copy.
+  - **Active sessions** (admin): cancel, and terminate with password re-confirmation.
+  - **Audit viewer** (admin): filters and a detail drawer.
+- **New shared components:** `SqlCodeEditor`, `ConfirmDialog`, `DrawerPanel`, plus cron and diff helpers.
+- **No PHP changes.**
+- **Verification:**
+  - lint, typecheck, build and `composer test` pass
+  - the pgsql group passes 505/505
+  - every flow passed in the browser; the only console noise is an existing favicon 404
+  - screenshots and GIF are in `~/Downloads/dbx-batch4/4b/`
+
+### F28–F31 — LOW — API gaps the 4B screens work around · NOT STARTED
+| # | Gap | Proposed fix | Reasoning |
+|---|---|---|---|
+| F28 | Backups take no format or schema/table options, although PRD §7.10 promises them. The screen shows "custom, whole database". | Accept a `format` (`custom`/`plain`) and `schemas[]`/`tables[]`, all validated, and pass them as an argument array: each table name becomes a separate `--table=` value, quoted, never interpolated into a string (S20) | Partial dumps are a common need. Passing names as array arguments keeps the S20 argument-injection protection. |
+| F29 | Schedules have no next-run field (the UI estimates it, assuming UTC when no timezone is set), and the runs API can't filter by schedule | Return `next_run_at` computed server-side with `CronExpression`, and add `?schedule=` to the runs API | The server's scheduler is the source of truth. A browser estimate can disagree across timezones. |
+| F30 | The audit API doesn't return `hash` or `prev_hash` | Add both to the admin-only audit response | Admins can then spot-check the chain against `dbx:audit:verify` output. The hashes aren't secret, since they're HMACs of rows the admin can already read. |
+| F31 | `/api/me` has no user id, so the schedule approver shows as "user N" | Add `user.id` and resolve approver names server-side (`approved_by_name`) | The approver is the person whose rights the job runs with, so the UI should name them clearly |
 
 ### F27 — MEDIUM — `REFRESH MATERIALIZED VIEW CONCURRENTLY` runs inside the HTTP request · NOT STARTED
 **Evidence.** Batch 4C found the refresh runs synchronously, although `DdlController`'s comment says it's handed to a background run. Views are always created with `CREATE OR REPLACE`, so there's no toggle for it.
