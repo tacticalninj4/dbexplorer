@@ -3,10 +3,11 @@ import { computed, ref, watch } from 'vue';
 import { api, describeError, segment } from '../api';
 import { primaryKey } from '../composables/catalog';
 import { formatNumber } from '../composables/format';
-import { findConnection } from '../composables/session';
+import { findConnection, hasRole } from '../composables/session';
 import type { Cell, Filter, RowsPage } from '../types';
 import DataGrid from './DataGrid.vue';
 import BaseIcon from './BaseIcon.vue';
+import ExportDialog from './ExportDialog.vue';
 import RowEditor from './RowEditor.vue';
 
 /**
@@ -14,7 +15,10 @@ import RowEditor from './RowEditor.vue';
  * view (GET rows/{schema}/{name}). Keyset cursors only page forward, so the
  * cursors (or offsets) of the pages already seen are kept for "Previous".
  */
-const props = defineProps<{ label: string; schema: string; name: string }>();
+const props = withDefaults(defineProps<{ label: string; schema: string; name: string; importable?: boolean }>(), { importable: false });
+
+/** Batch 4A: export (any role) and CSV import (editors, tables only). */
+const exporting = ref(false);
 
 const PAGE_SIZES = [50, 100, 250, 500, 1000];
 
@@ -228,6 +232,10 @@ watch(
                 <span v-else-if="key !== null && (findConnection(label)?.role ?? 'viewer') === 'viewer'" class="inline-flex items-center gap-1.5 text-xs text-fg-muted">
                     <BaseIcon name="eye" :size="12" />Read-only: viewer role
                 </span>
+                <span class="flex items-center gap-1.5" :class="canWrite || key !== null ? 'ml-1.5 border-l border-line pl-3' : ''">
+                    <button type="button" class="dbx-btn" title="Export every row to CSV, JSON Lines or SQL INSERTs, in the background" @click="exporting = true"><BaseIcon name="download" />Export</button>
+                    <router-link v-if="importable && hasRole(label, 'editor')" :to="{ name: 'import', params: { label }, query: { schema, name } }" class="dbx-btn" title="Load rows from a CSV file into this table"><BaseIcon name="upload" />Import CSV</router-link>
+                </span>
             </template>
 
             <template #footer>
@@ -262,6 +270,8 @@ watch(
                 </div>
             </template>
         </DataGrid>
+
+        <ExportDialog :open="exporting" :label="label" :source="{ table: { schema, name } }" :filtered="filters.length > 0 || sort !== null" @close="exporting = false" />
 
         <RowEditor
             :open="editor !== null"

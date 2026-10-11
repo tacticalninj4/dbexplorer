@@ -5,7 +5,8 @@ import EmptyState from '../components/EmptyState.vue';
 import BaseIcon from '../components/BaseIcon.vue';
 import type { IconName } from '../components/BaseIcon.vue';
 import ObjectTree from '../components/ObjectTree.vue';
-import { findConnection, useSession } from '../composables/session';
+import { findConnection, hasRole, useSession } from '../composables/session';
+import type { Role } from '../types';
 
 // /:label/…: the object tree beside the selected view.
 const route = useRoute();
@@ -20,6 +21,13 @@ const links: { name: string; title: string; icon: IconName }[] = [
     { name: 'history', title: 'Query history', icon: 'history' },
     { name: 'runs', title: 'Runs', icon: 'activity' },
 ];
+
+// batch 4A: editor+ screens (the API enforces the role; this only hides the links).
+const batch4aLinks: { name: string; title: string; icon: IconName; min: Role }[] = [
+    { name: 'import', title: 'Import CSV', icon: 'upload', min: 'editor' },
+];
+const navLinks = computed(() => [...links, ...batch4aLinks.filter((link) => hasRole(label.value, link.min))]);
+// end batch 4A
 </script>
 
 <template>
@@ -35,7 +43,7 @@ const links: { name: string; title: string; icon: IconName }[] = [
         <aside class="flex w-68 shrink-0 flex-col border-r border-line bg-panel max-lg:w-60">
             <nav aria-label="Connection" class="flex flex-col gap-px border-b border-line p-2">
                 <router-link
-                    v-for="link in links"
+                    v-for="link in navLinks"
                     :key="link.name"
                     :to="{ name: link.name, params: { label } }"
                     class="flex h-7 items-center gap-2.5 rounded-md px-2 text-sm text-fg-muted transition-colors duration-100 hover:bg-hover hover:text-fg"

@@ -349,7 +349,7 @@ watch(activeTab, () => void loadTab());
                 class="flex min-h-0 flex-1 flex-col"
                 :class="activeTab === 'data' ? '' : 'overflow-auto'"
             >
-                <TableData v-if="activeTab === 'data'" :label="label" :schema="schema" :name="name" />
+                <TableData v-if="activeTab === 'data'" :label="label" :schema="schema" :name="name" :importable="alterable" />
 
                 <div v-else class="p-4">
                     <SkeletonRows v-if="tabLoading" :rows="6" :columns="activeTab === 'stats' ? 2 : 4" />
