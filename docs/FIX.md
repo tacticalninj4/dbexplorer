@@ -4,7 +4,7 @@
 |---|---|
 | Verified commit | `2c53133` (main, 2026-10-10) |
 | Sources | Release verifier (test matrix, traceability, docs), independent security audit, end-to-end browser test |
-| Status | 23 fixes **applied** (batches 1–3) + F25 (all) · F24 **applied** (batch 4: 4C, 4B, 4A) · **open:** F27–F32, then final re-verification |
+| Status | 23 fixes **applied** (batches 1–3) + F25 (all) · F24, F27 **applied** · **deferred to v1.1:** F28–F32 · **open:** F33 · then final re-verification |
 
 ## How to read this
 
@@ -527,7 +527,7 @@ The full Laravel 9–13 matrix last ran at `4183940`, and batch 3 adds only test
 | F30 | The audit API doesn't return `hash` or `prev_hash` | Add both to the admin-only audit response | Admins can then spot-check the chain against `dbx:audit:verify` output. The hashes aren't secret, since they're HMACs of rows the admin can already read. |
 | F31 | `/api/me` has no user id, so the schedule approver shows as "user N" | Add `user.id` and resolve approver names server-side (`approved_by_name`) | The approver is the person whose rights the job runs with, so the UI should name them clearly |
 
-### F27 — MEDIUM — `REFRESH MATERIALIZED VIEW CONCURRENTLY` runs inside the HTTP request · NOT STARTED
+### F27 — MEDIUM — Materialized view refresh ran inside the HTTP request · APPLIED `a2367c9`, `7d3d4b5`
 **Evidence.** Batch 4C found the refresh runs synchronously, although `DdlController`'s comment says it's handed to a background run. Views are always created with `CREATE OR REPLACE`, so there's no toggle for it.
 
 **Proposed fix.** Send `REFRESH … CONCURRENTLY`, which can't run inside a transaction, through the same background-run path as `CREATE INDEX CONCURRENTLY`. The UI's queued-run notice is already wired for it. Then fix the comment.
@@ -535,6 +535,34 @@ The full Laravel 9–13 matrix last ran at `4183940`, and batch 3 adds only test
 **Reasoning.**
 - A large materialized view can take minutes to refresh. Inside a request it hits PHP and proxy timeouts and holds a worker.
 - This is exactly what the PRD's "long-running work goes to the backend" principle (§7.5) forbids.
+
+**Correction (found while fixing).** The original premise was wrong. `REFRESH … CONCURRENTLY` *can* run inside a transaction; this was verified on Postgres 18. The real bug was routing:
+- `DdlBuilder` marked refreshes as `transactional`.
+- The controller only sent *non*-transactional statements to the background.
+- So every refresh, plain or concurrent, ran inside the request.
+
+**Applied.**
+- **The routing:**
+  - `DdlBuilder` statements carry a new `background` flag. It's set for non-transactional statements (`CREATE`/`DROP INDEX CONCURRENTLY`) and for **every** materialized view refresh.
+  - `DdlController` queues any operation that contains a `background` statement as a script run and returns 202 with the run, the same path as `CREATE INDEX CONCURRENTLY`.
+  - Refreshes run in transaction mode; non-transactional index statements run in step mode.
+- **What the queued run keeps:** admin-only access, the audit entry, `DdlExecuted` on success, the pid tracked before the statement so cancel works, and `limits.background.timeout`.
+- **Plain refresh goes to the background too.** It re-runs the whole query and holds an `ACCESS EXCLUSIVE` lock that blocks every reader while it runs.
+- **UI:** the preview badge and the notice wording follow the `background` flag, and the notice links to the run.
+- **Tests:** the queued 202 (nothing refreshed in the request), the job refreshing the view with audit and `DdlExecuted`, a 403 for viewer and editor, and cancel mid-refresh with a real worker. They pass in `composer test`, the pgsql group (1414) and the touched suites on L9/PHP 8.0.
+
+### F33 — HIGH (CI) — A fresh install pulls an incompatible `paratest` · NOT STARTED
+**Evidence.** While fixing F27, `composer test` in a fresh worktree failed after `composer install` resolved a newer, incompatible `brianium/paratest`, which Pest pulls in for parallel runs. It passed only after copying `main`'s `composer.lock` in. `composer.lock` is gitignored, as is normal for a package, and CI runs `composer update`, so **CI's tooling lane, and any contributor's fresh clone, may now fail.**
+
+**Proposed fix.**
+1. Reproduce from a clean clone and identify the paratest/Pest/PHPUnit combination that breaks.
+2. Add the narrowest dev constraint that excludes the bad version, or bump Pest and plugins to versions that support it.
+3. Re-run every lane from a clean install, with no lock file.
+
+**Reasoning.**
+- A library's tests have to pass from a fresh resolve, because that's exactly what CI and contributors get.
+- A dev-only constraint fixes it without touching what host apps install.
+- It's in the final verification's scope either way, because the matrix has to run from clean installs.
 
 ## 5. Environment notes (no code fix)
 
