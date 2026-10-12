@@ -24,10 +24,10 @@ use Throwable;
  * or resume, and delete schedules for saved queries on the label.
  *
  * Creating or re-syncing a schedule is its approval (docs/security.md §6):
- * the saved query's SQL and parameters are copied into the schedule, and
- * the request names the `sql_hash` of the SQL the admin reviewed: when the
- * saved query no longer has that SQL, nothing is approved (409). The
- * the schedule runs that snapshot as the approving admin (re-checked at
+ * the saved query's SQL and parameters are copied into the schedule, provided
+ * they are still the SQL the admin reviewed (the request names its
+ * `sql_hash`; otherwise nothing is approved, 409). The
+ * schedule runs that snapshot as the approving admin (re-checked at
  * every run) — later edits to the saved query change nothing until an
  * admin re-syncs. It runs in a read-only transaction unless the approval
  * set `allow_writes`; DDL also needs `allow_ddl`. Allowing either needs a
