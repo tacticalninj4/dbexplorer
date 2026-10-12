@@ -2,6 +2,10 @@
 
 ## [Unreleased](https://github.com/tacticalninj4/dbexplorer/compare/v1.0.1...main)
 
+### Fixed
+
+- Deleting or editing a row whose text has leading or trailing spaces, or is an empty string, no longer fails with a false "The row was changed or deleted since it was read" 409. Laravel's global `TrimStrings` and `ConvertEmptyStringsToNull` middleware rewrote the values the grid sent back; DbExplorer's API now opts out of both, so edits also save `' padded '` and `''` exactly instead of `'padded'` and `NULL`.
+
 ## [v1.0.1](https://github.com/tacticalninj4/dbexplorer/compare/v1.0.0...v1.0.1) - 2026-10-12
 
 ### Added

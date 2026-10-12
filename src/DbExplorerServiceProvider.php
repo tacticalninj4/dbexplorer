@@ -6,6 +6,8 @@ namespace TacticalNinj4\DbExplorer;
 
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull;
+use Illuminate\Foundation\Http\Middleware\TrimStrings;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
@@ -117,6 +119,15 @@ class DbExplorerServiceProvider extends ServiceProvider
         ], function (): void {
             $this->loadRoutesFrom(__DIR__.'/../routes/dbexplorer.php');
         });
+
+        // The API takes cell values and SQL byte for byte. The host's global
+        // TrimStrings and ConvertEmptyStringsToNull would strip a value's
+        // trailing space or turn '' into NULL: a row's original then no longer
+        // matches it (a false 409 on delete or update), and an edit would
+        // silently change the data it writes.
+        $api = fn (Request $request): bool => $request->is(trim((string) config('dbexplorer.path', 'dbexplorer'), '/').'/api/*');
+        TrimStrings::skipWhen($api);
+        ConvertEmptyStringsToNull::skipWhen($api);
     }
 
     /**
