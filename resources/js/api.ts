@@ -1,3 +1,4 @@
+import { clearStorage } from './composables/storage';
 import { basePath, csrfToken } from './config';
 import { CLASSIFICATIONS } from './types';
 import type { ConfirmationRequired, QueryError } from './types';
@@ -125,6 +126,8 @@ async function request<T>(path: string, options: ApiOptions, confirmable: boolea
 
     if (response.status === 401 || response.status === 419) {
         // Session expired or CSRF token stale: a reload re-authenticates.
+        // Whoever signs in next may be someone else: the saved SQL goes first.
+        clearStorage();
         window.location.reload();
     } else if (response.status === 423 && confirmable && (await requestPasswordConfirmation())) {
         // Confirmed: retry once. A second 423 is thrown to the caller.

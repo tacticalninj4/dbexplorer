@@ -2,6 +2,8 @@
 
 export interface DbExplorerUser {
     name: string;
+    /** Opaque per-user key that scopes what the SPA keeps in localStorage. */
+    storageKey: string;
 }
 
 /**

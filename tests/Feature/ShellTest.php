@@ -108,8 +108,26 @@ it('injects the base path, CSRF token and user name into window.DbExplorer', fun
         ->and(json_decode((string) json_decode('"'.$matches[1].'"'), true))->toBe([
             'basePath' => '/admin/db',
             'csrfToken' => session()->token(),
-            'user' => ['name' => 'Dev'],
+            'user' => ['name' => 'Dev', 'storageKey' => substr(hash_hmac('sha256', '1', (string) config('app.key')), 0, 16)],
         ]);
+});
+
+it('F40 gives each user their own opaque localStorage key, never their id', function () {
+    app()['env'] = 'local';
+
+    $keys = [];
+
+    foreach ([1, 2] as $id) {
+        $html = (string) $this->actingAs(makeUser($id))->get('/dbexplorer')->assertOk()->getContent();
+
+        preg_match("/window\\.DbExplorer = JSON\\.parse\\('(.*)'\\);/", $html, $matches);
+
+        $keys[$id] = json_decode((string) json_decode('"'.$matches[1].'"'), true)['user']['storageKey'];
+    }
+
+    expect($keys[1])->toMatch('/^[0-9a-f]{16}$/')
+        ->and($keys[2])->toMatch('/^[0-9a-f]{16}$/')
+        ->and($keys[1])->not->toBe($keys[2]);
 });
 
 it('escapes user data in the inline script so it cannot close the tag', function () {
