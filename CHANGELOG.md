@@ -43,6 +43,7 @@ Fixed before release, after an independent audit:
 
 ### Fixed
 - Cancel stops background queries and exports mid-statement, not only between chunks.
+- Cancel stops a running backup: `pg_dump` is stopped and its partial file deleted, and the run ends cancelled. Before, the dump ran on and could end "succeeded".
 - A scheduled query's lock is released when its run ends, so a failed schedule runs again on the next due tick.
 - CSV uploads that libmagic reports as `application/csv` or `text/x-csv` are accepted.
 - A backup whose preflight fails is refused with the real cause instead of being queued to fail.

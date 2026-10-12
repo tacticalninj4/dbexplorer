@@ -140,8 +140,22 @@ final class BackupTool
      */
     public function run(array $command, ?float $timeout = 60.0): Process
     {
+        $process = $this->start($command, $timeout);
+        $process->wait();
+
+        return $process;
+    }
+
+    /**
+     * Start $command without waiting for it, for a caller that checks for a
+     * cancel while it runs.
+     *
+     * @param  list<string>  $command
+     */
+    public function start(array $command, ?float $timeout = 60.0): Process
+    {
         $process = new Process($command, null, $this->env(), null, $timeout);
-        $process->run();
+        $process->start();
 
         return $process;
     }

@@ -11,9 +11,11 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use TacticalNinj4\DbExplorer\Drivers\Postgres\BackupTool;
+use TacticalNinj4\DbExplorer\Exceptions\RunCancelled;
 use TacticalNinj4\DbExplorer\Exceptions\RunFailed;
 use TacticalNinj4\DbExplorer\Jobs\Concerns\TracksRun;
 use TacticalNinj4\DbExplorer\Models\Run;
+use Throwable;
 
 /**
  * A database backup (PRD §7.10): pg_dump in custom format, writing straight
@@ -21,6 +23,8 @@ use TacticalNinj4\DbExplorer\Models\Run;
  * with retention keeping the newest `backup.keep` per label. Restores are a
  * CLI matter — pg_restore against a target the operator chooses — and the
  * docs say so; the API never restores.
+ *
+ * Cancelling the run stops pg_dump and deletes the partial file.
  *
  * The run's result fields point at the stored dump, so the signed download
  * flow (S16) serves it to the run's owner. A failed preflight or dump fails
@@ -31,6 +35,9 @@ final class Backup implements ShouldQueue
     use Dispatchable, InteractsWithQueue, Queueable, TracksRun;
 
     public const TYPE = 'backup';
+
+    /** How often a running dump checks whether its run was cancelled. */
+    private const POLL_MICROSECONDS = 500000;
 
     protected function process(Run $run, string $connection): void
     {
@@ -63,7 +70,28 @@ final class Backup implements ShouldQueue
         /** @var list<string> $schemas */
         $schemas = array_values(array_filter((array) ($run->meta['schemas'] ?? []), 'is_string'));
 
-        $process = $tool->run(array_merge($tool->command('custom', $schemas), ['--file', $target]), (float) $this->timeout);
+        $process = $tool->start(array_merge($tool->command('custom', $schemas), ['--file', $target]), (float) $this->timeout);
+
+        try {
+            // The run's backend pid is this job's own idle connection, so a
+            // cancel's pg_cancel_backend never reaches pg_dump: watch for the
+            // cancel flag instead, and stop pg_dump (and so its session).
+            while ($process->isRunning()) {
+                if ($this->shouldStop()) {
+                    $process->stop(5);
+
+                    throw new RunCancelled;
+                }
+
+                $process->checkTimeout();
+                usleep(self::POLL_MICROSECONDS);
+            }
+        } catch (Throwable $e) {
+            // A cancelled or timed-out dump is partial: never leave it looking like a backup.
+            $storage->delete($relative);
+
+            throw $e;
+        }
 
         if (! $process->isSuccessful()) {
             $storage->delete($relative);
