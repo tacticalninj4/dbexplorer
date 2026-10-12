@@ -20,6 +20,8 @@ export interface SavedQuery {
     name: string;
     description: string | null;
     sql: string;
+    /** sha256 of `sql`: a schedule's approval sends it back, so the server knows which SQL was reviewed. */
+    sql_hash: string;
     params: SavedQueryParam[];
     visibility: 'private' | 'shared';
     tags: string[];

@@ -145,7 +145,7 @@ it('S11 runs the approved snapshot: a viewer editing their shared query to DROP 
         ->assertStatus(201)
         ->json('data');
 
-    scheduleApi($this, 1, 'POST', 'schedules', ['saved_query_id' => $saved['id'], 'cron' => '* * * * *'])->assertStatus(201);
+    scheduleApi($this, 1, 'POST', 'schedules', ['saved_query_id' => $saved['id'], 'sql_hash' => $saved['sql_hash'], 'cron' => '* * * * *'])->assertStatus(201);
 
     // then edits it into DDL
     scheduleApi($this, 2, 'PATCH', "queries/{$saved['id']}", ['sql' => "DROP TABLE {$schema}.victim"])->assertOk();
@@ -164,7 +164,7 @@ it('S11 keeps running the snapshot after the viewer makes their query private an
     createUsers(2);
 
     $saved = scheduleApi($this, 2, 'POST', 'queries', ['name' => 'Count', 'sql' => 'SELECT count(*) FROM fixture.posts', 'visibility' => 'shared'])->json('data');
-    scheduleApi($this, 1, 'POST', 'schedules', ['saved_query_id' => $saved['id'], 'cron' => '* * * * *'])->assertStatus(201);
+    scheduleApi($this, 1, 'POST', 'schedules', ['saved_query_id' => $saved['id'], 'sql_hash' => $saved['sql_hash'], 'cron' => '* * * * *'])->assertStatus(201);
     scheduleApi($this, 2, 'PATCH', "queries/{$saved['id']}", ['sql' => 'SELECT 1/0', 'visibility' => 'private'])->assertOk();
 
     Artisan::call('dbx:schedule:tick');
@@ -179,7 +179,7 @@ it('S9 runs a schedule without allow_writes in a read-only transaction, so write
 
     // the classifier calls this a read; the database knows better
     $saved = scheduleApi($this, 1, 'POST', 'queries', ['name' => 'Bump', 'sql' => "SELECT nextval('{$schema}.counter')"])->json('data');
-    scheduleApi($this, 1, 'POST', 'schedules', ['saved_query_id' => $saved['id'], 'cron' => '* * * * *'])->assertStatus(201);
+    scheduleApi($this, 1, 'POST', 'schedules', ['saved_query_id' => $saved['id'], 'sql_hash' => $saved['sql_hash'], 'cron' => '* * * * *'])->assertStatus(201);
 
     Artisan::call('dbx:schedule:tick');
 

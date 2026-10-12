@@ -71,6 +71,15 @@ async function load(): Promise<void> {
     }
 }
 
+/** Fetch the saved queries again, after an approval found one changed since the page loaded (409). */
+async function reloadQueries(): Promise<void> {
+    try {
+        queries.value = await listSavedQueries(label.value);
+    } catch (e) {
+        error.value = describeError(e, 'The saved queries could not be reloaded.');
+    }
+}
+
 const unapproved = computed(() => (schedules.value ?? []).filter((schedule) => !schedule.approved).length);
 const dateTime = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
@@ -161,15 +170,21 @@ async function resync(): Promise<void> {
     try {
         const updated = (await api<{ data: Schedule }>(`${segment(label.value)}/schedules/${schedule.id}/resync`, {
             method: 'POST',
-            body: { allow_writes: resyncWrites.value, allow_ddl: resyncDdl.value },
+            body: { sql_hash: resyncSource.value?.sql_hash, allow_writes: resyncWrites.value, allow_ddl: resyncDdl.value },
         })).data;
         replace(updated);
         resyncing.value = null;
         notice.value = `Schedule #${updated.id} re-approved with the saved query's current SQL.${updated.enabled ? '' : ' It is still paused: enable it when you are ready.'}`;
     } catch (e) {
-        resyncError.value = e instanceof ApiError && e.status === 423
-            ? 'Allowing writes or DDL needs your password. Nothing changed: confirm your password, or untick the permission.'
-            : plainPermissions(describeError(e, 'The schedule could not be re-synced.'));
+        if (e instanceof ApiError && e.status === 409) {
+            // The saved query changed while the diff was open: show the new diff to review.
+            await reloadQueries();
+            resyncError.value = 'The saved query changed while you were reviewing it. Nothing changed: the diff now shows its current SQL. Review it, then approve again.';
+        } else {
+            resyncError.value = e instanceof ApiError && e.status === 423
+                ? 'Allowing writes or DDL needs your password. Nothing changed: confirm your password, or untick the permission.'
+                : plainPermissions(describeError(e, 'The schedule could not be re-synced.'));
+        }
     } finally {
         resyncBusy.value = false;
     }
@@ -339,6 +354,7 @@ watch(label, load, { immediate: true });
             :initial-query-id="dialog?.queryId ?? null"
             @close="dialog = null"
             @saved="onSaved"
+            @stale="reloadQueries"
         />
 
         <ModalDialog

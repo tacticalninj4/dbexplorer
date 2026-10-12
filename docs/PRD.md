@@ -157,7 +157,7 @@ Every long operation becomes a **Run**, a row in `dbx_runs` with a type, status 
 
 ### 7.9 Scheduled queries (M4, admin)
 - A cron expression, using `dragonmantank/cron-expression`, which Laravel already ships, over a **snapshot** of a saved query.
-- **Approval snapshots the SQL.** Creating a schedule copies the saved query's SQL and typed parameters into it, with their hash, and records the approving admin. Later edits to the saved query change nothing until an admin re-approves with `POST api/{label}/schedules/{id}/resync`. Creating and re-syncing are audited with the approved SQL.
+- **Approval snapshots the SQL.** Creating a schedule copies the saved query's SQL and typed parameters into it, with their hash, and records the approving admin. Later edits to the saved query change nothing until an admin re-approves with `POST api/{label}/schedules/{id}/resync`. Creating and re-syncing send the `sql_hash` of the SQL the admin reviewed, and are refused with 409 when the saved query changed since. Both are audited with the approved SQL.
 - **Runs as the approver.** Each run re-resolves the approver's role. If they're no longer an admin of the label, or the snapshot is missing or doesn't match its hash, the schedule is disabled (audited) and `ScheduleFailed` fires.
 - **Read-only unless approved for more.** Runs use a read-only transaction. `allow_writes` permits DML and `allow_ddl` (implying `allow_writes`) permits DDL. Both are set only at approval, which needs a recent password confirmation (S5); SQL the classifier calls DML or DDL is refused without the matching flag.
 - Schedules that existed before snapshots are backfilled from their saved query but stay disabled and unapproved until an admin re-syncs them.

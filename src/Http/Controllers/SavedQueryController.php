@@ -173,6 +173,8 @@ class SavedQueryController
             'name' => $query->name,
             'description' => $query->description,
             'sql' => $query->sql,
+            // what a schedule's approval sends back, to prove which SQL was reviewed
+            'sql_hash' => hash('sha256', $query->sql),
             'params' => $query->params ?? [],
             'visibility' => $query->visibility,
             'tags' => $query->tags ?? [],

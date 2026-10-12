@@ -13,6 +13,7 @@ use Illuminate\Testing\TestResponse;
 use TacticalNinj4\DbExplorer\Console\ScheduleTickCommand;
 use TacticalNinj4\DbExplorer\Events\ScheduleFailed;
 use TacticalNinj4\DbExplorer\Facades\DbExplorer;
+use TacticalNinj4\DbExplorer\Http\Controllers\ScheduleController;
 use TacticalNinj4\DbExplorer\Jobs\RunScheduledQuery;
 use TacticalNinj4\DbExplorer\Models\AuditEntry;
 use TacticalNinj4\DbExplorer\Models\Run;
@@ -58,6 +59,14 @@ function approvedSchedule(array $attributes = [], ?SavedQuery $saved = null): Sc
     $schedule->save();
 
     return $schedule;
+}
+
+/**
+ * The sql_hash an admin's client sends for the SQL it showed them (F36).
+ */
+function reviewedHash(SavedQuery|string $sql): string
+{
+    return hash('sha256', $sql instanceof SavedQuery ? $sql->sql : $sql);
 }
 
 /**
@@ -219,6 +228,7 @@ it('creates a schedule, and refuses invalid crons and required parameters', func
 
     $data = schedulesAs($this, 'POST', '', [
         'saved_query_id' => $query->id,
+        'sql_hash' => reviewedHash($query),
         'cron' => '*/5 * * * *',
         'notify' => ['on' => ['failure', 'threshold'], 'threshold_rows' => 1000, 'mail' => ['ops@example.com']],
     ])->assertStatus(201)->json('data');
@@ -238,11 +248,11 @@ it('creates a schedule, and refuses invalid crons and required parameters', func
         ->and($audit->classification)->toBe('read')
         ->and($audit->meta)->toEqual(['schedule_id' => $data['id'], 'saved_query_id' => $query->id, 'sql_hash' => hash('sha256', 'SELECT count(*) FROM fixture.posts'), 'allow_writes' => false, 'allow_ddl' => false]);
 
-    schedulesAs($this, 'POST', '', ['saved_query_id' => $query->id, 'cron' => 'not a cron'])
+    schedulesAs($this, 'POST', '', ['saved_query_id' => $query->id, 'sql_hash' => reviewedHash($query), 'cron' => 'not a cron'])
         ->assertStatus(422)
         ->assertJsonValidationErrors('cron');
 
-    schedulesAs($this, 'POST', '', ['saved_query_id' => 999, 'cron' => '* * * * *'])->assertNotFound();
+    schedulesAs($this, 'POST', '', ['saved_query_id' => 999, 'sql_hash' => reviewedHash($query), 'cron' => '* * * * *'])->assertNotFound();
 
     $parameterful = scheduledQuery([
         'name' => 'Needs input',
@@ -250,7 +260,7 @@ it('creates a schedule, and refuses invalid crons and required parameters', func
         'params' => [['name' => 'id', 'type' => 'int']],
     ]);
 
-    schedulesAs($this, 'POST', '', ['saved_query_id' => $parameterful->id, 'cron' => '* * * * *'])
+    schedulesAs($this, 'POST', '', ['saved_query_id' => $parameterful->id, 'sql_hash' => reviewedHash($parameterful), 'cron' => '* * * * *'])
         ->assertStatus(422)
         ->assertJsonValidationErrors('saved_query_id');
 });
@@ -271,7 +281,7 @@ it('S11 snapshots the SQL: editing or hiding the saved query later does not chan
     // user 2, a viewer, shares a SELECT; user 1, an admin, schedules it
     $shared = scheduledQuery(['user_id' => '2', 'visibility' => 'shared']);
 
-    $id = schedulesAs($this, 'POST', '', ['saved_query_id' => $shared->id, 'cron' => '* * * * *'])->assertStatus(201)->json('data.id');
+    $id = schedulesAs($this, 'POST', '', ['saved_query_id' => $shared->id, 'sql_hash' => reviewedHash($shared), 'cron' => '* * * * *'])->assertStatus(201)->json('data.id');
 
     DbExplorer::roleUsing(fn (): string => 'viewer');
 
@@ -288,7 +298,7 @@ it('S11 snapshots the SQL: editing or hiding the saved query later does not chan
         ->and(schedulesAs($this, 'GET', '')->json('data.0.in_sync'))->toBeFalse();
 
     // the admin can no longer see the now-private query, so can't re-sync it
-    schedulesAs($this, 'POST', "/{$id}/resync")->assertNotFound();
+    schedulesAs($this, 'POST', "/{$id}/resync", ['sql_hash' => reviewedHash('DROP TABLE fixture.posts')])->assertNotFound();
 
     expect($schedule->refresh()->sql)->toBe('SELECT count(*) FROM fixture.posts');
 });
@@ -297,11 +307,11 @@ it('S11 asks for allow_writes for write SQL and allow_ddl for DDL before schedul
     $dml = scheduledQuery(['name' => 'Cleanup', 'sql' => 'DELETE FROM fixture.posts WHERE id < 0']);
     $ddl = scheduledQuery(['name' => 'Rebuild', 'sql' => 'DROP TABLE fixture.posts']);
 
-    schedulesAs($this, 'POST', '', ['saved_query_id' => $dml->id, 'cron' => '* * * * *'])
+    schedulesAs($this, 'POST', '', ['saved_query_id' => $dml->id, 'sql_hash' => reviewedHash($dml), 'cron' => '* * * * *'])
         ->assertStatus(422)
         ->assertJsonValidationErrors('allow_writes');
 
-    schedulesAs($this, 'POST', '', ['saved_query_id' => $ddl->id, 'cron' => '* * * * *', 'allow_writes' => true])
+    schedulesAs($this, 'POST', '', ['saved_query_id' => $ddl->id, 'sql_hash' => reviewedHash($ddl), 'cron' => '* * * * *', 'allow_writes' => true])
         ->assertStatus(422)
         ->assertJsonValidationErrors('allow_ddl');
 
@@ -311,17 +321,17 @@ it('S11 asks for allow_writes for write SQL and allow_ddl for DDL before schedul
 it('S5 approving writes or DDL for a schedule needs a recent password confirmation', function () {
     $dml = scheduledQuery(['name' => 'Cleanup', 'sql' => 'DELETE FROM fixture.posts WHERE id < 0']);
 
-    schedulesAs($this, 'POST', '', ['saved_query_id' => $dml->id, 'cron' => '* * * * *', 'allow_writes' => true])
+    schedulesAs($this, 'POST', '', ['saved_query_id' => $dml->id, 'sql_hash' => reviewedHash($dml), 'cron' => '* * * * *', 'allow_writes' => true])
         ->assertStatus(423);
 
-    schedulesAs($this, 'POST', '', ['saved_query_id' => scheduledQuery()->id, 'cron' => '* * * * *', 'allow_ddl' => true])
+    schedulesAs($this, 'POST', '', ['saved_query_id' => ($select = scheduledQuery())->id, 'sql_hash' => reviewedHash($select), 'cron' => '* * * * *', 'allow_ddl' => true])
         ->assertStatus(423);
 
     expect(Schedule::query()->count())->toBe(0);
 
     $this->withSession(['auth.password_confirmed_at' => time()]);
 
-    $data = schedulesAs($this, 'POST', '', ['saved_query_id' => $dml->id, 'cron' => '* * * * *', 'allow_writes' => true])
+    $data = schedulesAs($this, 'POST', '', ['saved_query_id' => $dml->id, 'sql_hash' => reviewedHash($dml), 'cron' => '* * * * *', 'allow_writes' => true])
         ->assertStatus(201)
         ->json('data');
 
@@ -336,12 +346,14 @@ it('S17 re-syncs a schedule from its saved query for admins only, re-approved by
 
     $saved->update(['sql' => 'SELECT count(*) FROM fixture.users']);
 
-    schedulesAs($this, 'POST', "/{$schedule->id}/resync", [], 'editor')->assertForbidden();
-    schedulesAs($this, 'POST', "/{$schedule->id}/resync", [], 'viewer')->assertForbidden();
+    $reviewed = ['sql_hash' => reviewedHash($saved)];
+
+    schedulesAs($this, 'POST', "/{$schedule->id}/resync", $reviewed, 'editor')->assertForbidden();
+    schedulesAs($this, 'POST', "/{$schedule->id}/resync", $reviewed, 'viewer')->assertForbidden();
 
     expect($schedule->refresh()->sql)->toBe('SELECT count(*) FROM fixture.posts');
 
-    $data = schedulesAs($this, 'POST', "/{$schedule->id}/resync")->assertOk()->json('data');
+    $data = schedulesAs($this, 'POST', "/{$schedule->id}/resync", $reviewed)->assertOk()->json('data');
 
     expect($data['sql'])->toBe('SELECT count(*) FROM fixture.users')
         ->and($data['approved_by'])->toBe('1')
@@ -359,8 +371,80 @@ it('S17 re-syncs a schedule from its saved query for admins only, re-approved by
     // re-syncing to write SQL asks for allow_writes, and then for the password
     $saved->update(['sql' => 'DELETE FROM fixture.posts WHERE id < 0']);
 
-    schedulesAs($this, 'POST', "/{$schedule->id}/resync")->assertStatus(422)->assertJsonValidationErrors('allow_writes');
-    schedulesAs($this, 'POST', "/{$schedule->id}/resync", ['allow_writes' => true])->assertStatus(423);
+    $reviewed = ['sql_hash' => reviewedHash($saved)];
+
+    schedulesAs($this, 'POST', "/{$schedule->id}/resync", $reviewed)->assertStatus(422)->assertJsonValidationErrors('allow_writes');
+    schedulesAs($this, 'POST', "/{$schedule->id}/resync", $reviewed + ['allow_writes' => true])->assertStatus(423);
 
     expect($schedule->refresh()->sql)->toBe('SELECT count(*) FROM fixture.users');
+});
+
+it('F36 approves nothing when the saved query changed between review and approval: 409', function () {
+    // the audit's proof of concept: the admin reviewed a harmless DELETE,
+    // then the owner swapped in another one before the admin approved
+    $saved = scheduledQuery(['user_id' => '2', 'visibility' => 'shared', 'sql' => 'DELETE FROM fixture.posts WHERE id = -2']);
+    $reviewed = reviewedHash($saved);
+
+    $saved->update(['sql' => 'DELETE FROM dbx_audit_log WHERE true']);
+
+    $this->withSession(['auth.password_confirmed_at' => time()]);
+
+    schedulesAs($this, 'POST', '', ['saved_query_id' => $saved->id, 'sql_hash' => $reviewed, 'cron' => '* * * * *', 'allow_writes' => true])
+        ->assertStatus(409)
+        ->assertJsonPath('message', ScheduleController::SQL_CHANGED);
+
+    expect(Schedule::query()->count())->toBe(0)
+        ->and(AuditEntry::query()->where('action', 'schedule.created')->exists())->toBeFalse();
+
+    // the same for a re-sync: the schedule keeps its approved snapshot
+    $saved->update(['sql' => 'DELETE FROM fixture.posts WHERE id = -2']);
+    $schedule = approvedSchedule([], $saved);
+    $reviewed = reviewedHash($saved);
+    $saved->update(['sql' => 'DELETE FROM dbx_audit_log WHERE true']);
+
+    schedulesAs($this, 'POST', "/{$schedule->id}/resync", ['sql_hash' => $reviewed, 'allow_writes' => true])
+        ->assertStatus(409)
+        ->assertJsonPath('message', ScheduleController::SQL_CHANGED);
+
+    expect($schedule->refresh()->sql)->toBe('DELETE FROM fixture.posts WHERE id = -2')
+        ->and(AuditEntry::query()->where('action', 'schedule.resynced')->exists())->toBeFalse();
+
+    // reviewing the new SQL and approving that works
+    schedulesAs($this, 'POST', "/{$schedule->id}/resync", ['sql_hash' => reviewedHash($saved), 'allow_writes' => true])
+        ->assertOk()
+        ->assertJsonPath('data.sql', 'DELETE FROM dbx_audit_log WHERE true');
+});
+
+it('F36 needs the reviewed sql_hash to create or re-sync a schedule', function (array $body) {
+    $saved = scheduledQuery();
+    $schedule = approvedSchedule([], $saved);
+
+    schedulesAs($this, 'POST', '', ['saved_query_id' => $saved->id, 'cron' => '* * * * *'] + $body)
+        ->assertStatus(422)
+        ->assertJsonValidationErrors('sql_hash');
+
+    schedulesAs($this, 'POST', "/{$schedule->id}/resync", $body)
+        ->assertStatus(422)
+        ->assertJsonValidationErrors('sql_hash');
+
+    expect(Schedule::query()->count())->toBe(1)
+        ->and(AuditEntry::query()->count())->toBe(0);
+})->with([
+    'missing' => [[]],
+    'empty' => [['sql_hash' => '']],
+    'not a sha256' => [['sql_hash' => 'not-a-hash']],
+    'upper case' => [['sql_hash' => strtoupper(hash('sha256', 'SELECT count(*) FROM fixture.posts'))]],
+    'not a string' => [['sql_hash' => ['a']]],
+]);
+
+it('F36 gives saved queries their sql_hash, the value an approval sends back', function () {
+    $saved = scheduledQuery();
+
+    DbExplorer::roleUsing(fn (): string => 'admin');
+
+    $listed = $this->actingAs(makeUser())->getJson('/dbexplorer/api/main/queries')->assertOk()->json('data.0');
+
+    expect($listed['sql_hash'])->toBe(hash('sha256', $saved->sql));
+
+    schedulesAs($this, 'POST', '', ['saved_query_id' => $saved->id, 'sql_hash' => $listed['sql_hash'], 'cron' => '* * * * *'])->assertStatus(201);
 });

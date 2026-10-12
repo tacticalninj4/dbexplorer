@@ -25,6 +25,8 @@ use Throwable;
  *
  * Creating or re-syncing a schedule is its approval (docs/security.md §6):
  * the saved query's SQL and parameters are copied into the schedule, and
+ * the request names the `sql_hash` of the SQL the admin reviewed: when the
+ * saved query no longer has that SQL, nothing is approved (409). The
  * the schedule runs that snapshot as the approving admin (re-checked at
  * every run) — later edits to the saved query change nothing until an
  * admin re-syncs. It runs in a read-only transaction unless the approval
@@ -35,6 +37,11 @@ use Throwable;
  */
 class ScheduleController
 {
+    /** The sha256 of the SQL the admin reviewed: required, so an approval can't skip the check. */
+    private const SQL_HASH_RULES = ['required', 'string', 'regex:/^[0-9a-f]{64}$/'];
+
+    public const SQL_CHANGED = 'The saved query changed since you reviewed it. Nothing was approved: review the new SQL and approve again.';
+
     public function index(Request $request): JsonResponse
     {
         $this->authorize($request);
@@ -60,6 +67,7 @@ class ScheduleController
 
         $input = $request->validate([
             'saved_query_id' => ['required', 'integer'],
+            'sql_hash' => self::SQL_HASH_RULES,
             'cron' => ['required', 'string', 'max:64', function (string $attribute, mixed $value, Closure $fail): void {
                 try {
                     new CronExpression((string) $value);
@@ -83,18 +91,22 @@ class ScheduleController
             'notify.mail.*' => ['email'],
         ]);
 
-        $saved = $this->usableSavedQuery($request, (int) $input['saved_query_id']);
-        [$allowWrites, $allowDdl] = $this->approval($request, $saved, $input);
+        $schedule = $this->reviewed($request, (int) $input['saved_query_id'], (string) $input['sql_hash'], function (SavedQuery $saved) use ($request, $input): Schedule {
+            [$allowWrites, $allowDdl] = $this->approval($request, $saved, $input);
 
-        $schedule = (new Schedule([
-            'user_id' => $this->userId($request),
-            'cron' => (string) $input['cron'],
-            'timezone' => $input['timezone'] ?? null,
-            'enabled' => (bool) ($input['enabled'] ?? true),
-            'notify' => $this->notify($input),
-        ]))->approve($saved, $this->userId($request), $allowWrites, $allowDdl);
+            $schedule = (new Schedule([
+                'user_id' => $this->userId($request),
+                'cron' => (string) $input['cron'],
+                'timezone' => $input['timezone'] ?? null,
+                'enabled' => (bool) ($input['enabled'] ?? true),
+                'notify' => $this->notify($input),
+            ]))->approve($saved, $this->userId($request), $allowWrites, $allowDdl);
 
-        $schedule->save();
+            $schedule->save();
+
+            return $schedule;
+        });
+
         $this->auditApproval($schedule, 'schedule.created');
 
         return new JsonResponse(['data' => $this->toApi($schedule->refresh(), $this->userId($request))], 201);
@@ -102,7 +114,7 @@ class ScheduleController
 
     /**
      * Copy the saved query's current SQL and parameters into the schedule
-     * again, approved by the current admin with the write and DDL
+     * again, provided they are still the ones the admin reviewed, approved by the current admin with the write and DDL
      * permissions given now (both off unless sent). Audited.
      *
      * @throws ValidationException
@@ -114,14 +126,17 @@ class ScheduleController
         $model = $this->find($request, $schedule);
 
         $input = $request->validate([
+            'sql_hash' => self::SQL_HASH_RULES,
             'allow_writes' => ['sometimes', 'boolean'],
             'allow_ddl' => ['sometimes', 'boolean'],
         ]);
 
-        $saved = $this->usableSavedQuery($request, $model->saved_query_id);
-        [$allowWrites, $allowDdl] = $this->approval($request, $saved, $input);
+        $this->reviewed($request, $model->saved_query_id, (string) $input['sql_hash'], function (SavedQuery $saved) use ($request, $input, $model): void {
+            [$allowWrites, $allowDdl] = $this->approval($request, $saved, $input);
 
-        $model->approve($saved, $this->userId($request), $allowWrites, $allowDdl)->save();
+            $model->approve($saved, $this->userId($request), $allowWrites, $allowDdl)->save();
+        });
+
         $this->auditApproval($model, 'schedule.resynced');
 
         return new JsonResponse(['data' => $this->toApi($model->refresh(), $this->userId($request))]);
@@ -178,19 +193,31 @@ class ScheduleController
     }
 
     /**
-     * The saved query the admin may schedule: their own or a shared one on
-     * the label. Anything else is a 404.
+     * Run $approve with the saved query the admin may schedule (their own or
+     * a shared one on the label, else 404), provided its SQL is still the
+     * SQL they reviewed (else 409). The row stays locked until $approve has
+     * saved the approval, so an edit can't land between the check and the
+     * copy.
+     *
+     * @template T
+     *
+     * @param  Closure(SavedQuery): T  $approve
+     * @return T
      */
-    private function usableSavedQuery(Request $request, int $id): SavedQuery
+    private function reviewed(Request $request, int $id, string $sqlHash, Closure $approve): mixed
     {
-        $saved = SavedQuery::query()
-            ->usableBy($this->userId($request), (string) $request->attributes->get(ResolveRole::LABEL))
-            ->whereKey($id)
-            ->first();
+        return SavedQuery::query()->getConnection()->transaction(function () use ($request, $id, $sqlHash, $approve): mixed {
+            $saved = SavedQuery::query()
+                ->usableBy($this->userId($request), (string) $request->attributes->get(ResolveRole::LABEL))
+                ->whereKey($id)
+                ->lockForUpdate()
+                ->first();
 
-        abort_unless($saved instanceof SavedQuery, 404);
+            abort_unless($saved instanceof SavedQuery, 404);
+            abort_unless(hash_equals(hash('sha256', $saved->sql), $sqlHash), 409, self::SQL_CHANGED);
 
-        return $saved;
+            return $approve($saved);
+        });
     }
 
     /**

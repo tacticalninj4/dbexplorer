@@ -19,7 +19,7 @@ const props = withDefaults(defineProps<{ open: boolean; label: string; schedule?
     schedule: null,
     initialQueryId: null,
 });
-const emit = defineEmits<{ close: []; saved: [schedule: Schedule] }>();
+const emit = defineEmits<{ close: []; saved: [schedule: Schedule]; stale: [] }>();
 
 const PRESETS = [
     { cron: '0 * * * *', title: 'Every hour' },
@@ -111,6 +111,7 @@ async function submit(): Promise<void> {
                 method: 'POST',
                 body: {
                     saved_query_id: queryId.value,
+                    sql_hash: query.value?.sql_hash,
                     cron: cron.value.trim(),
                     timezone: timezone.value.trim() || null,
                     enabled: enabled.value,
@@ -121,9 +122,15 @@ async function submit(): Promise<void> {
             });
         emit('saved', response.data);
     } catch (e) {
-        error.value = e instanceof ApiError && e.status === 423
-            ? 'Allowing writes or DDL needs your password. Nothing was saved: confirm your password to approve it, or untick the permission.'
-            : plainPermissions(describeError(e, 'The schedule could not be saved.'));
+        if (e instanceof ApiError && e.status === 409 && !props.schedule) {
+            // The saved query changed after it was loaded: show its current SQL to review.
+            emit('stale');
+            error.value = 'The saved query changed since this page loaded. Nothing was saved: review its current SQL above, then approve again.';
+        } else {
+            error.value = e instanceof ApiError && e.status === 423
+                ? 'Allowing writes or DDL needs your password. Nothing was saved: confirm your password to approve it, or untick the permission.'
+                : plainPermissions(describeError(e, 'The schedule could not be saved.'));
+        }
     } finally {
         busy.value = false;
     }

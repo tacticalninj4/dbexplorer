@@ -34,6 +34,7 @@ Known API gaps the screens work around, planned for v1.1: exports don't apply th
 ### Security
 Fixed before release, after an independent audit:
 - Scheduled queries re-read the saved query's live SQL, so a viewer could edit a shared query after an admin scheduled it and have it run as admin. Schedules now snapshot the SQL at approval (above). **Upgrading an earlier install:** the migration disables existing schedules until an admin re-syncs them (docs/security.md §6).
+- A schedule's approval wasn't tied to the SQL the admin reviewed: an edit to the saved query between loading the page and approving got approved instead. `POST api/{label}/schedules` and `…/resync` now require the reviewed `sql_hash` (the saved queries API returns it) and answer **409** without approving anything when the saved query changed since; a missing or malformed hash is a 422. **API change** for scripted clients.
 - The audit log viewer showed rows from every label; it now shows only rows from labels where the user is admin.
 - Table exports quote their identifiers and resolve the table before exporting (S12).
 - A user without a stored password got a 500 on password confirmation; it's now a plain refusal (S5).
