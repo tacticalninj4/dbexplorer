@@ -4,7 +4,7 @@
 |---|---|
 | Verified commit | `2c53133` (main, 2026-10-10) |
 | Sources | Release verifier (test matrix, traceability, docs), independent security audit, end-to-end browser test |
-| Status | 23 fixes **applied** (batches 1–3) + F25 (all) · F24, F27, F33–F35 **applied** · F36–F40 **applied** on branch `fix-f36-f40` (dist `801d351`), awaiting merge · **deferred to v1.1:** F28–F32 · final re-verification: step 1 ✅, step 2 found F36–F40 (now fixed), step 3 pending |
+| Status | 23 fixes **applied** (batches 1–3) + F25 (all) · F24, F27, F33–F35 **applied** · F36–F40 **applied** on branch `fix-f36-f40` (dist `801d351`), awaiting merge · **deferred to v1.1:** F28–F32 · final re-verification: step 1 ✅, step 2 found F36–F40 (now fixed), step 3 ✅ (branch `verify-step3`): F42–F43 **applied** on branch `fix-f42-f43` (dist `09f7976`), F41 proposed, F44 info |
 
 ## How to read this
 
@@ -710,13 +710,82 @@ No critical or high findings.
 - L9 / PHP 8.0 prefer-lowest (Laravel 9.47.0, Pest 1) on Postgres 12.22, clean install with no lock file: full suite 1430 passed, 2 skipped. The skips are the real dump and restore tests, because the image has no `pg_dump`.
 - Frontend: lint and typecheck pass, and `dist/` is rebuilt byte-identical.
 
+### Final verification — step 3 (browser, every role, 2026-10-12) ✅
+Run in Chrome (Claude in Chrome) against `composer serve` on `main` at `47703ba` plus the workbench changes on branch `verify-step3`, with Postgres 18, a `database` queue worker, `schedule:work`, the `log` mailer and Homebrew's `pg_dump` 18.1. Direct API calls came from a second session (curl) for each role.
+
+**Workbench (committed on `verify-step3`, `f1519de`).** Batch 4A couldn't check viewer and editor because the workbench only granted admin.
+- Three users, each mapped to its own `dbx_*` login: `/login` (admin), `/login/editor`, `/login/viewer`, and `/logout`.
+- The pgsql tests' `hidden` (`fixture.secrets`) and `masking` config are mirrored, as §5 suggested.
+- An optional `DBX_WORKBENCH_PG_DUMP`, and a read grant to `dbx_admin` on the superuser-owned app tables, so a whole-database backup works. The README recipe gets that through `app_owner`.
+- TESTING.md §3.1 documents all of it (`4a9f56e`).
+
+**Results.**
+
+| Check | Admin | Editor | Viewer |
+|---|---|---|---|
+| M0: shell, role badge, only allowlisted labels (an unknown label or a raw connection name is 404) | ✅ | ✅ | ✅ |
+| M1: tree, grid, keyset paging over 1M rows, sort, filter, SELECT, EXPLAIN, history | ✅ | ✅ tree, grid, SQL editor (history via API) | ✅ tree, grid, SQL editor (history via API) |
+| M2: edit row, 409 conflict with the three-way diff, "Overwrite with mine", DELETE without WHERE → classification dialog → password → 5 rows affected | ✅ | ✅ insert, delete with password; DDL "Not allowed" | ✅ read-only grid, no edit actions; writes fail at the database (see F41) |
+| M3: export → progress toast → signed download (masked in the file); cancel a background `pg_sleep` (backend gone) | ✅ | background run queued (API); export not repeated | ✅ export masked; cancel from Runs |
+| M3: CSV import (skip-bad-rows: 2 inserted, row 2 reported with its value redacted); scripts (DML runs, DDL refused) | ✅ | ✅ | screens show "needs the editor role"; API 403 |
+| M4: saved query with a typed param; schedule; backup (9.4 MB, `pg_restore --list` reads it); terminate a session (password, run marked failed, audited); audit viewer | ✅ | screens "Admins only"; API 403 | screens "Admins only"; API 403 |
+| Nav hides what the role can't use; direct URLs show a role notice; schema context menu and "+ Table/View" admin only | ✅ | ✅ | ✅ |
+| API on direct calls: rows writes, import, script, DDL preview/execute, sessions, schedules, backups, audit, unmask → 403; another user's run, cancel or download → 404 | n/a | ✅ | ✅ |
+| S13: `fixture.secrets` missing from the tree, its URL "Object not found", API 404, query through the view `secret_labels` → 42P01 | ✅ | ✅ | ✅ |
+| S14: `password` and `api_token` masked in grid, query results and CSV; `password AS pw` unmasked (documented gap) | ✅ | ✅ | ✅ |
+| No console errors and no CSP violations (listener on `securitypolicyviolation`, nonce-only CSP) | ✅ | ✅ | ✅ |
+
+**The F36–F40 fixes in the real UI.**
+- **F36** ✅: with the schedule dialog open, the owner (viewer) edited the shared saved query. "Approve and schedule" answered 409, the dialog showed the new SQL, and no schedule or audit row was written. In the re-sync dialog the same race re-showed the diff against the newest SQL. Approving after review used the reviewed SQL.
+- **F37** ✅: with three `pg_sleep` runs queued, the viewer's 4th got "Limit reached" in the SQL editor and the cap message on Saved queries. The editor's run queued at the same time (202). Cancelling the three from the Runs page freed the slots.
+- **F38** ✅: a schedule for a query named `[Reset password](https://evil.example/reset)` mailed (log driver) with no `href` to it: the HTML shows the text literally, the text part escaped. After a rename to another link, the next mail kept the approved name, and the Schedules screen showed "Saved query changed".
+- **F39** ✅: `pg_dump` blocked behind a held `ACCESS EXCLUSIVE` lock was cancelled from the Runs page. The run ended cancelled, with no `pg_dump` process, no partial file, and `run.cancel` + `run.cancelled` audited.
+- **F40b** ✅ for what it covers: after switching users, the next user sees only their own tabs. A 401 (after `/logout`) cleared every `dbexplorer:` key and reloaded. The gap is F43.
+
+Screenshots and GIFs are in `~/Downloads/dbx-step3/`.
+
+### F41 — LOW (UX) — A viewer is asked to confirm writes it can never run · NOT STARTED
+**Evidence.** A viewer running `UPDATE …` in the SQL editor, or a write saved query, gets the "Change rows?" dialog with "Run DML". After confirming, the database answers `permission denied` (42501). For DDL the server answers 403 "Only admins can run DDL" up front. (`viewer-dml-confirm-then-42501.jpg`.)
+
+**Proposed fix.** In `QueryController::run` and `SavedQueryController::run`, return 403 "Viewers can only run read queries" when the role is viewer and the classification isn't `read`, before the 409 confirmation. That's the same shape as the DDL check. The database stays the boundary for anything the classifier reads as `read` (S9 and S11 bypass tests are unchanged).
+
+**Reasoning.** Asking someone to confirm an action they can't take is misleading, and the editor's DDL path already behaves the right way. It's a product call (the current behaviour is safe), so it's written up, not applied.
+
+### F42 — LOW — Scripts showed the wrong statement text when several shared a line · APPLIED `0d6c892`
+**Evidence.** `INSERT …; UPDATE …; DELETE …` on one line listed the INSERT text three times in the per-statement results. The server returns only each statement's start line, and the screen matched by line.
+
+**Applied.** The server lists every statement in script order, so `ScriptsView` takes the span at the same position when it fits the server's line, and falls back to the line match otherwise. The failure detail ("Failed at 2, line 1") uses it too. Re-verified in the browser with five statements on two lines and a failing step (`f42-fixed-statement-text.jpg`).
+
+### F43 — LOW (privacy) — The previous user's SQL tabs stayed in browser storage after a normal logout · APPLIED `b8a93b0`
+**Evidence.** F40b clears the keys on a 401/419. But a host logout leaves the page, so no DbExplorer request sees the 401. After admin → viewer in one browser, the admin's tab with its SQL was still in `localStorage` under the admin's key. It was hidden in the UI, but readable in devtools.
+
+**Applied.** On load the shell keeps only the signed-in user's `dbexplorer:u:<storageKey>:` keys and removes every other `dbexplorer:` key, including the pre-F40b ones it already removed. Re-verified: after admin → viewer, storage held no admin key.
+
+**Trade-off.** Two people taking turns in one browser profile lose each other's unsaved tabs. That's the behaviour F40b's reasoning asks for, and it can be reverted on its own.
+
+### F44 — INFO — Smaller observations (no change)
+| # | Observation | Note |
+|---|---|---|
+| a | The Saved queries screen shows the F37 cap message without the "Limit reached" title used by the SQL editor and Scripts | Cosmetic. That screen titles no errors. |
+| b | The schedule mail's plain-text part shows the escaped name (`\[Reset password\]\(…\)`) | The price of F38's escaping. The HTML part reads cleanly. |
+| c | Backups have no Cancel of their own; a running backup is cancelled from the Runs page | Already listed under F32 (`BackupsView` doesn't use `RunPanel`). |
+| d | While a query runs, the SQL editor toolbar wraps and "History" drops to a second row (seen at 1512 px) | Cosmetic. |
+| e | Exports have no `ORDER BY`, so rows come out in physical order (e.g. 2, 3, 1 after an update) | Matches "every row". Ordering by PK would need a sort on large tables. |
+| env | The workbench's app tables in `public` are owned by the superuser, so a whole-database `pg_dump` as `dbx_admin` failed with `permission denied for table migrations` | Workbench only; fixed in its seeder. The README recipe's `app_owner` membership covers real installs. |
+
+**Verification (branch `fix-f42-f43`, merged into `verify-step3` for the browser re-check).**
+- `composer test` (L13 / PHP 8.4 / Pest 5, Postgres 18): PHPStan, Pint, 100% type coverage, 1436 passed. The same on `verify-step3`.
+- `ScriptJobTest`, `ShellTest` and `AssetTest` run serially: 45 passed.
+- Frontend: lint and typecheck pass, and `dist/` is rebuilt byte-identical (`09f7976`).
+- **Not covered:** the Windows and PHP 8.0 lanes for these JS-only changes. Mobile widths and browsers other than Chrome were not tried.
+
 ## 5. Environment notes (no code fix)
 
 | Note | Action |
 |---|---|
 | The Chrome extension wasn't connected during the browser test, so headless Chrome was used instead | None. The GIFs and screenshots are in `/tmp/wt-e2e-tools/`. |
-| Local `pg_dump` is 17 (Postgres.app) and the server is 18, so a successful backup couldn't be tested end to end | Covered by F19's container wrapper. Alternatively, upgrade Postgres.app. |
-| The workbench doesn't hide `fixture.secrets` the way the test config does | Optional: mirror the test's `hidden` and `masking` config in `WorkbenchServiceProvider`, so manual testing matches |
+| Local `pg_dump` is 17 (Postgres.app) and the server is 18, so a successful backup couldn't be tested end to end | Covered by F19's container wrapper. Step 3 backed up end to end with Homebrew's `libpq` `pg_dump` 18.1 through `DBX_WORKBENCH_PG_DUMP`. |
+| ~~The workbench doesn't hide `fixture.secrets` the way the test config does~~ | Done in step 3 (`f1519de`): the workbench mirrors the tests' `hidden` and `masking` |
 | The workbench's `failed_jobs` table lives on SQLite | Optional: put it on the Postgres workbench database |
 | Docker images `dbx-verify-php80`…`85` are kept for re-running lanes | Remove them when they're no longer needed |
 
