@@ -35,7 +35,7 @@ export function writeStorage(key: string, value: unknown): void {
     }
 }
 
-/** Remove DbExplorer's keys: every user's (`all`), or only the ones from before keys were per user. */
+/** Remove DbExplorer's keys: every user's (`all`), or all but the signed-in user's. */
 function removeKeys(all: boolean): void {
     try {
         const keys: string[] = [];
@@ -43,7 +43,7 @@ function removeKeys(all: boolean): void {
         for (let index = 0; index < window.localStorage.length; index++) {
             const key = window.localStorage.key(index);
 
-            if (key !== null && key.startsWith(PREFIX) && (all || !key.startsWith(`${PREFIX}u:`))) {
+            if (key !== null && key.startsWith(PREFIX) && (all || !key.startsWith(USER_PREFIX))) {
                 keys.push(key);
             }
         }
@@ -60,5 +60,8 @@ export function clearStorage(): void {
     removeKeys(true);
 }
 
-// Keys from before they were per user (`dbexplorer:editor:<label>`) are anyone's: drop them.
+// Only the signed-in user's keys may stay. A host logout usually leaves the
+// page without another API call, so no 401/419 clears the last user's SQL:
+// drop every other user's keys here, and the ones from before keys were per
+// user (`dbexplorer:editor:<label>`), which are anyone's.
 removeKeys(false);
