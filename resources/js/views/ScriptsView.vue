@@ -97,17 +97,29 @@ function lineOf(text: string, index: number): number {
     return line;
 }
 
-/** The sent statement the server's statement (by its start line) refers to. */
-function spanFor(line: number): { text: string; from: number; to: number } | undefined {
+/**
+ * The sent statement the server's statement refers to. The server lists every
+ * statement in script order, so the one at the same position is it, as long as
+ * it fits the server's start line; several statements can share a line, so the
+ * line alone would name the first of them each time.
+ */
+function spanFor(line: number, index: number): { text: string; from: number; to: number } | undefined {
+    const own = spans.value[index];
+    const previous = index > 0 ? spans.value[index - 1] : undefined;
+
+    if (own && own.to >= line && (!previous || previous.to <= line)) {
+        return own;
+    }
+
     return spans.value.find((span) => span.to >= line);
 }
 
-const sources = computed(() => (run.value?.statements ?? []).map((statement) => (spanFor(statement.line)?.text ?? '').replace(/\s+/g, ' ').slice(0, 160)));
+const sources = computed(() => (run.value?.statements ?? []).map((statement, index) => (spanFor(statement.line, index)?.text ?? '').replace(/\s+/g, ' ').slice(0, 160)));
 const stoppedAt = computed(() => (run.value?.statements ?? []).findIndex((statement) => statement.status === 'failed' || statement.status === 'cancelled'));
 const shown = computed(() => {
     const index = selected.value ?? (stoppedAt.value >= 0 ? stoppedAt.value : null);
     const statement = index === null ? undefined : run.value?.statements?.[index];
-    const span = statement ? spanFor(statement.line) : undefined;
+    const span = statement && index !== null ? spanFor(statement.line, index) : undefined;
 
     if (index === null || !statement || !span) {
         return null;
