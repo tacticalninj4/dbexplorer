@@ -114,6 +114,8 @@ composer serve    # then open /login, which signs you in and redirects to /dbexp
 
 Without `DB_PGSQL_HOST` the workbench keeps SQLite.
 
+For role testing the seeder adds three users, each mapped to its own `dbx_*` login: `/login` signs in the admin, `/login/editor` and `/login/viewer` the others (password `password`), and `/logout` ends the session the way a host app's logout would. Like the pgsql tests, the workbench hides `fixture.secrets` and masks `users.password` and `api_token`. When the `pg_dump` on `PATH` is older than the server, point `DBX_WORKBENCH_PG_DUMP` at a newer one (e.g. Homebrew's `/opt/homebrew/opt/libpq/bin/pg_dump`) to take backups. Run `vendor/bin/testbench queue:work` and `vendor/bin/testbench schedule:work` alongside `composer serve` for runs and schedules.
+
 ### 3.2 What the test bootstrap creates
 It connects as the superuser and does the following, idempotently:
 1. Creates **cluster-wide login roles** through a `DO` block that holds an advisory lock, so parallel workers and checkouts don't race: `dbx_viewer`, `dbx_editor` and `dbx_admin`, all with the password `dbx-test-password`.
