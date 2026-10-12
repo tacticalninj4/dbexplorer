@@ -4,7 +4,7 @@
 |---|---|
 | Verified commit | `2c53133` (main, 2026-10-10) |
 | Sources | Release verifier (test matrix, traceability, docs), independent security audit, end-to-end browser test |
-| Status | 23 fixes **applied** (batches 1–3) + F25 (all) · F24, F27 **applied** · **deferred to v1.1:** F28–F32 · **open:** F33 · then final re-verification |
+| Status | 23 fixes **applied** (batches 1–3) + F25 (all) · F24, F27, F33–F35 **applied** · **deferred to v1.1:** F28–F32 · final re-verification: step 1 ✅, steps 2–3 pending |
 
 ## How to read this
 
@@ -551,7 +551,7 @@ The full Laravel 9–13 matrix last ran at `4183940`, and batch 3 adds only test
 - **UI:** the preview badge and the notice wording follow the `background` flag, and the notice links to the run.
 - **Tests:** the queued 202 (nothing refreshed in the request), the job refreshing the view with audit and `DdlExecuted`, a 403 for viewer and editor, and cancel mid-refresh with a real worker. They pass in `composer test`, the pgsql group (1414) and the touched suites on L9/PHP 8.0.
 
-### F33 — HIGH (CI) — A fresh install pulls an incompatible `paratest` · NOT STARTED
+### F33 — HIGH (CI) — A fresh install pulls an incompatible `paratest` · APPLIED `5476e74`
 **Evidence.** While fixing F27, `composer test` in a fresh worktree failed after `composer install` resolved a newer, incompatible `brianium/paratest`, which Pest pulls in for parallel runs. It passed only after copying `main`'s `composer.lock` in. `composer.lock` is gitignored, as is normal for a package, and CI runs `composer update`, so **CI's tooling lane, and any contributor's fresh clone, may now fail.**
 
 **Proposed fix.**
@@ -563,6 +563,39 @@ The full Laravel 9–13 matrix last ran at `4183940`, and batch 3 adds only test
 - A library's tests have to pass from a fresh resolve, because that's exactly what CI and contributors get.
 - A dev-only constraint fixes it without touching what host apps install.
 - It's in the final verification's scope either way, because the matrix has to run from clean installs.
+
+**Root cause (final verification step 1).** `paratest` 7.26.1, released 2026-10-10, added a fifth `WrapperWorker` constructor argument that Pest 5.3.1 doesn't pass. That breaks `--parallel` on PHP 8.4+ (local `composer test`). CI lanes run serially and weren't affected.
+
+**Applied.** `require-dev` gains `"brianium/paratest": "^6.0 || ^7.0 <7.26.1"`. The `^6.0` alternative stops the prefer-lowest Pest 1 lane from resolving `paratest` v0.1.0, a 2013 release.
+
+### F34 — MEDIUM (CI) — Timing tests flaked under load · APPLIED `f79bba2`
+**Evidence.** In clean-install lanes, the lexer/splitter "1 MB in under 1 s" tests took 2.7 s on a loaded machine, against about 0.3 s idle. An S10 statement-timeout test failed once.
+
+**Applied.**
+- **Performance tests:** a `linearScaling()` helper times the work on 1 MB and on 100 KB, best of three, using process CPU time (wall time on Windows). It asserts the ratio is under 30, where linear scaling is about 10 and quadratic about 100, and keeps a 5 s backstop.
+- **Statement-timeout tests:** they sleep 30 s against the 1 s limit and assert SQLSTATE 57014 within 20 s.
+
+**Reasoning.**
+- Wall-clock bounds measure the machine, not the algorithm.
+- The ratio check is *stricter* than the old bound: a deliberately quadratic tokenizer that passed the old 1 s check scores 56–108 here. The real lexer scored 9.3–12.2 at load averages of 30–60.
+- Ten loops under deliberate load all passed.
+
+### F35 — LOW — Backup round-trip failed instead of skipping on mismatched clients · APPLIED `c729420`
+**Evidence.** `pg_restore` 17 and later emits `SET transaction_timeout`, which servers before 17 reject. Testing locally with a client 18 image against Postgres 12 failed the test instead of skipping it.
+
+**Applied.** The test skips with a stated reason when the client's major version is 17 or later and the server's is earlier than 17. Matching combinations still run, for example client 12 against Postgres 12 and anything against Postgres 18.
+
+**Reasoning.** A test environment's tool mismatch isn't a product failure. The restore path stays covered wherever the versions are compatible, which includes CI.
+
+### Final verification — step 1 (test matrix) ✅
+- **Clean installs, no lock file:**
+  - L9 / PHP 8.0 lowest on Postgres 12: 1410 passed
+  - L10 / PHP 8.3 on Postgres 18: 1410 passed
+  - tooling lane L13 / PHP 8.5 on Postgres 18: PHPStan, Pint and 100% type coverage pass, with 1414 passed both serially and in parallel
+- **Rest of the matrix:** it ran green before F33–F35. Its only failures were the load-related ones and a test-setup issue, both now fixed.
+- **Frontend:** checks pass, with a byte-identical `dist/`.
+- **Coverage:** every S1–S22 has its tests, all five events have no-leak tests, and F25c, F25d and F27 are tested.
+- **Docs:** they describe the batch 4 screens as built (`649369f`).
 
 ## 5. Environment notes (no code fix)
 
