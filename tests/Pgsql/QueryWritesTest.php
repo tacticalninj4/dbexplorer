@@ -5,10 +5,12 @@ declare(strict_types=1);
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Testing\TestResponse;
 use TacticalNinj4\DbExplorer\Events\DdlExecuted;
 use TacticalNinj4\DbExplorer\Facades\DbExplorer;
 use TacticalNinj4\DbExplorer\Models\AuditEntry;
+use TacticalNinj4\DbExplorer\Models\Run;
 use TacticalNinj4\DbExplorer\Tests\PgsqlTestCase;
 use Workbench\App\Models\User;
 
@@ -110,17 +112,58 @@ it('S5 asks an editor to confirm a DELETE or UPDATE without WHERE', function (st
     'delete in a CTE' => ['WITH d AS (DELETE FROM {schema}.notes RETURNING id) SELECT count(*) FROM d', 0],
 ]);
 
-it('S5 asks a viewer to confirm destructive SQL too, and the read-only transaction still refuses it', function () {
+it('F41 answers DML from a viewer with 403 before asking to confirm, running nothing', function (string $sql, bool $confirm) {
+    // A login with write grants: only the API gate stands between the viewer and the rows.
     config(['dbexplorer.connections.main.viewer' => 'pgsql_editor']);
 
-    writeQuery($this, 'viewer', "DELETE FROM {$this->schema}.notes")->assertStatus(423);
+    writeQuery($this, 'viewer', str_replace('{schema}', $this->schema, $sql), $confirm)
+        ->assertForbidden()
+        ->assertJsonPath('message', "Viewers can't change data (INSERT, UPDATE, DELETE, MERGE, CALL, SELECT ... FOR UPDATE).");
 
-    $this->withSession(['auth.password_confirmed_at' => time()])
-        ->postJson('/dbexplorer/api/main/query', ['sql' => "DELETE FROM {$this->schema}.notes", 'confirm' => true])
-        ->assertStatus(422)
-        ->assertJsonPath('error.sqlstate', '25006');
+    expect(notesLeft($this->schema))->toBe(3)
+        ->and(DB::connection('pgsql_super')->table("{$this->schema}.notes")->whereNotIn('body', ['one', 'two', 'three'])->count())->toBe(0)
+        ->and(AuditEntry::query()->where('action', 'query')->count())->toBe(0);
+})->with([
+    'insert' => ["INSERT INTO {schema}.notes (body) VALUES ('x')", false],
+    'insert, confirmed' => ["INSERT INTO {schema}.notes (body) VALUES ('x')", true],
+    'update' => ["UPDATE {schema}.notes SET body = 'x' WHERE id = 1", false],
+    'update, confirmed' => ["UPDATE {schema}.notes SET body = 'x' WHERE id = 1", true],
+    'delete' => ['DELETE FROM {schema}.notes WHERE id = 1', false],
+    'delete, confirmed' => ['DELETE FROM {schema}.notes WHERE id = 1', true],
+    'delete without where' => ['DELETE FROM {schema}.notes', true],
+    'update without where' => ["UPDATE {schema}.notes SET body = 'x'", true],
+    'delete in a CTE' => ['WITH d AS (DELETE FROM {schema}.notes RETURNING id) SELECT count(*) FROM d', true],
+    'merge' => ["MERGE INTO {schema}.notes n USING (SELECT 1 AS id) s ON n.id = s.id WHEN MATCHED THEN UPDATE SET body = 'x'", true],
+    'select for update' => ['SELECT * FROM {schema}.notes FOR UPDATE', true],
+]);
 
-    expect(notesLeft($this->schema))->toBe(3);
+it('F41 answers destructive DML from a viewer with 403 even with a fresh password confirmation', function () {
+    config(['dbexplorer.connections.main.viewer' => 'pgsql_editor']);
+
+    $this->withSession(['auth.password_confirmed_at' => time()]);
+
+    writeQuery($this, 'viewer', "DELETE FROM {$this->schema}.notes")->assertForbidden();
+
+    expect(notesLeft($this->schema))->toBe(3)
+        ->and(AuditEntry::query()->where('action', 'query')->count())->toBe(0);
+});
+
+it('F41 answers DML from a viewer with 403 in the background too, queueing nothing', function () {
+    Queue::fake();
+
+    postAsRole($this, 'viewer', '/dbexplorer/api/main/query', ['sql' => "UPDATE {$this->schema}.notes SET body = 'x' WHERE id = 1", 'background' => true])
+        ->assertForbidden();
+
+    Queue::assertNothingPushed();
+    expect(Run::query()->count())->toBe(0);
+});
+
+it('F41 still asks an editor to confirm DML, and lets a viewer read', function () {
+    writeQuery($this, 'editor', "INSERT INTO {$this->schema}.notes (body) VALUES ('x')", false)
+        ->assertStatus(409)
+        ->assertJsonPath('error.code', 'confirmation_required');
+    writeQuery($this, 'editor', "INSERT INTO {$this->schema}.notes (body) VALUES ('x')")->assertOk();
+    writeQuery($this, 'viewer', "SELECT count(*) FROM {$this->schema}.notes", false)->assertOk()->assertJsonPath('data.rows', [[4]]);
 });
 
 it('S5 skips the confirmation while dbexplorer.confirm_password is false', function () {
@@ -149,7 +192,7 @@ it('asks to confirm anything the classifier does not call a read with 409, runni
     'editor unknown' => ['editor', 'LOCK TABLE {schema}.notes', 'unknown'],
     'admin ddl' => ['admin', 'CREATE TABLE {schema}.made (id int)', 'ddl'],
     'admin destructive' => ['admin', 'DROP TABLE {schema}.notes', 'destructive'],
-    'viewer dml' => ['viewer', "INSERT INTO {schema}.notes (body) VALUES ('x')", 'dml'],
+    'viewer unknown' => ['viewer', 'LOCK TABLE {schema}.notes', 'unknown'],
 ]);
 
 it('runs reads without asking to confirm', function (string $role) {

@@ -122,7 +122,7 @@ These requirements are non-negotiable, and each needs automated tests.
 - Results grid, row count, duration, and NOTICE messages.
 - `EXPLAIN` and `EXPLAIN ANALYZE`, with the plan shown as a tree. `ANALYZE` runs inside a transaction that is rolled back.
 - Query history per user, stored server-side with masked parameters.
-- If the classifier sees DML, DDL or destructive SQL, the user gets a confirmation dialog that shows the classification, plus password re-confirm (S5) where required.
+- If the classifier sees DML, DDL or destructive SQL, the user gets a confirmation dialog that shows the classification, plus password re-confirm (S5) where required. SQL the role can never run is refused with a 403 instead, before any dialog: DDL from viewers and editors, and DML from viewers (UX only, S11; the grants still decide).
 - Queries that are likely to be slow or large can be sent to the background with "Run in background" (§7.5).
 
 ### 7.4 Schema editing (M2)

@@ -64,7 +64,14 @@ it('S11 lets the database refuse payloads the classifier misreads, as editor and
     expect(Classifier::classify($sql))->toBe($class);
 
     // Viewer first: proves the read-only transaction, then the editor's grants.
-    evasionQuery($this, 'viewer', $sql)->assertStatus(422)->assertJsonPath('error.sqlstate', $viewerState);
+    // What the classifier reads as DML the API refuses a viewer up front (F41);
+    // the bypass test below has the database's answer to it.
+    if (Classifier::isDml($sql)) {
+        evasionQuery($this, 'viewer', $sql)->assertForbidden();
+    } else {
+        evasionQuery($this, 'viewer', $sql)->assertStatus(422)->assertJsonPath('error.sqlstate', $viewerState);
+    }
+
     evasionQuery($this, 'editor', $sql)->assertStatus(422)->assertJsonPath('error.sqlstate', $editorState);
 
     expect(evilExists($this->schema))->toBeFalse();
@@ -106,8 +113,9 @@ it('S11 has the database refuse DDL even when the API gate is bypassed', functio
 
     expect(Classifier::classify($sql))->toBe($class);
 
-    // The API answers ddl with 403 (and destructive with 423) before running
-    // anything; the runner has no such gate, so this is the database alone.
+    // The API answers ddl with 403 (and destructive with 423), and a viewer's
+    // dml with 403, before running anything; the runner has no such gate, so
+    // this is the database alone.
     foreach (['viewer' => $viewerState, 'editor' => '42501'] as $role => $state) {
         try {
             app(QueryRunner::class)->run("pgsql_{$role}", $sql, [], $role, ['label' => 'main']);
@@ -131,4 +139,5 @@ it('S11 has the database refuse DDL even when the API gate is bypassed', functio
     'DROP TABLE' => ['DROP TABLE {schema}.target', 'destructive', '25006'],
     'ALTER TABLE' => ['ALTER TABLE {schema}.target ADD COLUMN evil int', 'ddl', '25006'],
     'TRUNCATE' => ['TRUNCATE {schema}.target', 'destructive', '25006'],
+    'DDL inside a procedure, via CALL' => ['CALL {schema}.make_table_proc()', 'dml', '25006'],
 ]);

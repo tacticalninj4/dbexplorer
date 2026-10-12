@@ -26,6 +26,9 @@ class QueryController
 {
     public const HISTORY_PER_PAGE = 50;
 
+    /** The 403 for a viewer's DML (F41), shared with saved queries. */
+    public const VIEWER_DML = "Viewers can't change data (INSERT, UPDATE, DELETE, MERGE, CALL, SELECT ... FOR UPDATE).";
+
     /**
      * Run `sql` with optional `bindings` (all positional or all named), as
      * `explain` 'plain' or 'analyze', or `unmask`ed (admins only, audited).
@@ -37,9 +40,13 @@ class QueryController
      * gates the request, for UX only (S11): the database grants and the
      * viewer's read-only transaction are the real boundary.
      *
-     * 1. DDL from a non-admin: 403. That is `ddl`, and destructive DDL (DROP,
-     *    TRUNCATE, ALTER … DROP), see Classifier::isDdl(). Destructive DML
-     *    (UPDATE or DELETE without WHERE) goes on to steps 2 and 3.
+     * 1. DML from a viewer: 403, also with `background` (F41). That is `dml`,
+     *    and destructive DML (UPDATE or DELETE without WHERE), see
+     *    Classifier::isDml(): the viewer's read-only transaction would refuse
+     *    it anyway, so asking to confirm first would mislead. DDL from a
+     *    non-admin: 403. That is `ddl`, and destructive DDL (DROP, TRUNCATE,
+     *    ALTER … DROP), see Classifier::isDdl(). An editor's destructive DML
+     *    goes on to steps 2 and 3.
      * 2. Anything but `read` (so `unknown` too: the classifier can't vouch that
      *    it only reads) without `confirm: true`: 409 `{error: {message, code:
      *    'confirmation_required', classification}}`, nothing runs. The client
@@ -78,6 +85,8 @@ class QueryController
 
         if (($input['explain'] ?? null) === null) {
             $classification = Classifier::classify((string) $input['sql']);
+
+            abort_if($role === Role::VIEWER && Classifier::isDml((string) $input['sql']), 403, self::VIEWER_DML);
 
             if ((bool) ($input['background'] ?? false)) {
                 // A background run streams to a file: only reads qualify, and

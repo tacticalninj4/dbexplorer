@@ -23,12 +23,14 @@ import type { Classification, QueryResponse } from '../types';
  * /:label/queries (PRD §7.8): your saved queries and the shared ones. Pick
  * one (?id=) to see its SQL, fill in its typed parameters and run it here,
  * in the background, or in the SQL editor. The run gate is the server's:
- * 409 asks to confirm, 423 for the password (api()), 403 for DDL.
+ * 409 asks to confirm, 423 for the password (api()), 403 for DDL, and for
+ * DML from a viewer (no confirmation dialog for those).
  */
 const route = useRoute();
 const router = useRouter();
 const label = computed(() => String(route.params.label));
 const isAdmin = computed(() => findConnection(label.value)?.role === 'admin');
+const isViewer = computed(() => findConnection(label.value)?.role === 'viewer');
 
 const queries = ref<SavedQuery[] | null>(null);
 const loadError = ref<string | null>(null);
@@ -106,6 +108,8 @@ async function remove(): Promise<void> {
 const values = reactive<Record<string, string>>({});
 const result = ref<QueryResponse | null>(null);
 const runError = ref<string | null>(null);
+/** The callout's title for the last failed run: a refusal or the run cap, else none. */
+const runErrorTitle = ref<string | null>(null);
 const running = ref(false);
 const queued = ref<number | null>(null);
 const resultView = ref<'results' | 'plan' | 'messages'>('results');
@@ -153,6 +157,8 @@ async function run(confirmed = false, background = false): Promise<void> {
             return;
         }
         result.value = null;
+        const status = e instanceof ApiError ? e.status : 0;
+        runErrorTitle.value = status === 403 ? 'Not allowed' : status === 429 ? 'Limit reached' : null;
         runError.value = e instanceof ApiError && e.status === 423 ? 'This query is destructive and needs your password. Run it again to confirm.' : describeError(e);
     } finally {
         running.value = false;
@@ -323,7 +329,13 @@ watch(label, load, { immediate: true });
 
                     <div class="flex min-h-0 flex-1 flex-col bg-canvas" aria-live="polite">
                         <div v-if="runError" class="p-3">
-                            <div role="alert" class="dbx-callout dbx-callout-danger"><BaseIcon name="alert-circle" /><pre class="font-sans whitespace-pre-wrap">{{ runError }}</pre></div>
+                            <div role="alert" class="dbx-callout dbx-callout-danger">
+                                <BaseIcon name="alert-circle" />
+                                <div class="min-w-0 flex-1">
+                                    <p v-if="runErrorTitle" class="font-semibold">{{ runErrorTitle }}</p>
+                                    <pre class="font-sans whitespace-pre-wrap">{{ runError }}</pre>
+                                </div>
+                            </div>
                         </div>
                         <template v-else-if="result">
                             <DataGrid v-if="resultView === 'results' && result.columns.length" :columns="result.columns" :rows="result.rows" empty-text="The query returned no rows">
@@ -344,7 +356,8 @@ watch(label, load, { immediate: true });
                             </template>
                         </template>
                         <EmptyState v-else icon="play" title="Run it to see the result">
-                            Writes ask you to confirm first, and destructive SQL asks for your password.
+                            <template v-if="isViewer">Viewers can run read queries only: a query that changes data is refused.</template>
+                            <template v-else>Writes ask you to confirm first, and destructive SQL asks for your password.</template>
                         </EmptyState>
                     </div>
                 </template>

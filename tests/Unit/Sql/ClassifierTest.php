@@ -212,6 +212,32 @@ it('tells DDL, including destructive DDL, from destructive DML', function (strin
     ['', false],
 ]);
 
+it('tells DML, including destructive DML, from DDL', function (string $sql, bool $dml) {
+    expect(Classifier::isDml($sql))->toBe($dml);
+})->with([
+    ['INSERT INTO t VALUES (1)', true],
+    ['UPDATE t SET a = 1 WHERE id = 1', true],
+    ['DELETE FROM t WHERE id = 1', true],
+    ['MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN DELETE', true],
+    ['CALL p()', true],
+    ['SELECT * FROM t FOR UPDATE', true],
+    ['DELETE FROM t', true],
+    ['(UPDATE t SET a = 1)', true],
+    ['/* x */ update t set a = 1', true],
+    ['WITH d AS (DELETE FROM t RETURNING *) SELECT 1', true],
+    ['EXPLAIN ANALYZE DELETE FROM t', true],
+    ['SELECT 1; INSERT INTO t VALUES (1)', true],
+    ['DROP TABLE t', false],
+    ['TRUNCATE t', false],
+    ['ALTER TABLE t DROP COLUMN c', false],
+    ['CREATE TABLE t (id int)', false],
+    ['SELECT 1', false],
+    ['EXPLAIN DELETE FROM t', false],
+    ['LOCK TABLE t', false],
+    ["SELECT 'INSERT INTO t VALUES (1)'", false],
+    ['', false],
+]);
+
 it('returns each statement with its offset, text and class', function () {
     $sql = "-- lead\nSELECT 1;\n\n  DELETE FROM t /* all */ ;; -- trailing\n";
 

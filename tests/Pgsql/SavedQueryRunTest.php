@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Queue;
 use Illuminate\Testing\TestResponse;
 use TacticalNinj4\DbExplorer\Facades\DbExplorer;
 use TacticalNinj4\DbExplorer\Jobs\RunQuery;
+use TacticalNinj4\DbExplorer\Models\AuditEntry;
 use TacticalNinj4\DbExplorer\Models\Run;
 use TacticalNinj4\DbExplorer\Models\SavedQuery;
 use TacticalNinj4\DbExplorer\Tests\PgsqlTestCase;
@@ -86,15 +87,21 @@ it('applies the editor\'s confirmation ladder to saved queries', function () {
         'visibility' => 'shared',
     ]);
 
-    runSaved($this, $dml->id, ['values' => ['name' => 'sessions']])
+    runSaved($this, $dml->id, ['values' => ['name' => 'sessions']], 'editor')
         ->assertStatus(409)
         ->assertJsonPath('error.code', 'confirmation_required');
 
-    // Viewers confirm too, but their read-only transaction refuses the write
-    // at the database — the real boundary, same as the SQL editor.
-    runSaved($this, $dml->id, ['values' => ['name' => 'sessions'], 'confirm' => true], 'viewer')
-        ->assertStatus(422)
-        ->assertJsonPath('error.sqlstate', '42501');
+    // A viewer is refused before any confirmation (F41), confirmed or not,
+    // in the background too: their read-only transaction would refuse the
+    // write anyway, same as the SQL editor.
+    foreach ([[], ['confirm' => true], ['background' => true]] as $extra) {
+        runSaved($this, $dml->id, ['values' => ['name' => 'sessions']] + $extra, 'viewer')
+            ->assertForbidden()
+            ->assertJsonPath('message', "Viewers can't change data (INSERT, UPDATE, DELETE, MERGE, CALL, SELECT ... FOR UPDATE).");
+    }
+
+    expect(Run::query()->count())->toBe(0)
+        ->and(AuditEntry::query()->where('action', 'query')->count())->toBe(0);
 
     DbExplorer::roleUsing(fn (): string => 'editor');
 

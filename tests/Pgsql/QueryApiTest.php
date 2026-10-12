@@ -62,14 +62,20 @@ it('binds named values', function () {
         ->toBe([['Carol']]);
 });
 
-it('S9 answers a viewer UPDATE with 422 and SQLSTATE 25006, even on a login with write grants', function () {
+it('S9 refuses a viewer UPDATE with 403, and a write the classifier misses with 422 and SQLSTATE 25006, even on a login with write grants', function () {
     config(['dbexplorer.connections.main.viewer' => 'pgsql_editor']);
 
+    // The API refuses what the classifier reads as DML up front (F41)...
     queryAs($this, 'viewer', ['sql' => "UPDATE fixture.counters SET value = value + 1 WHERE name = 'visits'", 'confirm' => true])
+        ->assertForbidden();
+
+    // ...and the read-only transaction refuses a write hidden in a function.
+    queryAs($this, 'viewer', ['sql' => 'SELECT fixture.sneaky()'])
         ->assertStatus(422)
         ->assertJsonPath('error.sqlstate', '25006');
 
-    expect(DB::connection('pgsql_super')->selectOne("SELECT value FROM fixture.counters WHERE name = 'visits'")->value)->toBe(42);
+    expect(DB::connection('pgsql_super')->table('fixture.counters')->orderBy('name')->pluck('value', 'name')->all())
+        ->toBe(['sneaky' => 0, 'visits' => 42]);
 });
 
 it('S8 rejects multiple statements with 422 and runs none of them', function (string $sql) {

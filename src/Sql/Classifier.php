@@ -78,6 +78,26 @@ final class Classifier
     }
 
     /**
+     * Whether any statement is dml, or destructive DML: UPDATE or DELETE
+     * without WHERE, also inside a CTE, as opposed to DROP, TRUNCATE or
+     * ALTER … DROP. The writes isDdl() leaves out. UX only, like classify().
+     */
+    public static function isDml(string $sql): bool
+    {
+        foreach (self::statements($sql) as $statement) {
+            if ($statement['class'] === self::DML) {
+                return true;
+            }
+
+            if ($statement['class'] === self::DESTRUCTIVE && ! in_array(self::command($statement['sql']), ['DROP', 'TRUNCATE', 'ALTER'], true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * The statement's first keyword, upper-cased, past any opening parens.
      */
     private static function command(string $sql): string

@@ -220,7 +220,8 @@ function onTabKeydown(event: KeyboardEvent): void {
  * Run the statement at the cursor (or the selection). No client-side gating:
  * reads run directly, and the server answers anything else with 409 (confirm
  * first), 423 (password confirmation, handled by the shared modal in api()) or
- * 403 (DDL from a non-admin), each of which the UI just follows.
+ * 403 (DDL from a non-admin, DML from a viewer), each of which the UI just
+ * follows: a 403 never shows the confirmation dialog.
  */
 function start(explain: ExplainMode): void {
     const editor = view.value;
@@ -475,7 +476,8 @@ const shiftKey = isMac ? '⇧' : 'Shift';
             <section class="flex min-h-0 flex-1 flex-col bg-canvas" aria-label="Result" aria-live="polite">
                 <EmptyState v-if="!run" icon="terminal" title="Run a statement to see its result">
                     Press <kbd class="dbx-kbd">{{ modKey }}↵</kbd> to run the statement under the cursor, or <kbd class="dbx-kbd">{{ shiftKey }}{{ modKey }}↵</kbd> to see its plan.
-                    Writes and schema changes ask you to confirm first.
+                    <template v-if="role === 'viewer'">Viewers can run read queries only: writes and schema changes are refused.</template>
+                    <template v-else>Writes and schema changes ask you to confirm first.</template>
                 </EmptyState>
                 <div v-else-if="run.status === 'running'" class="flex items-center gap-2 p-4 text-sm text-fg-muted" role="status"><span class="dbx-spinner" aria-hidden="true" />Running…</div>
                 <div v-else-if="run.status === 'background' && run.job" class="overflow-auto p-3">

@@ -69,7 +69,8 @@ class SavedQueryController
      * Run a saved query now, or queue it in the background. The typed
      * parameter values are bound as `?` by the lexer-aware rewriter, so a
      * `':name'` inside a string literal is never one. The classification
-     * gate mirrors the SQL editor's: DDL is admin-only (403), anything but
+     * gate mirrors the SQL editor's: DML from a viewer is refused (403, F41),
+     * DDL is admin-only (403), anything but
      * a read asks for `confirm` (409), destructive also for a recent
      * password confirmation (423, S5) — and the database grants are the
      * boundary, as ever. Only reads can go to the background (202).
@@ -97,6 +98,8 @@ class SavedQueryController
         }
 
         $classification = Classifier::classify($sql);
+
+        abort_if($role === Role::VIEWER && Classifier::isDml($sql), 403, QueryController::VIEWER_DML);
 
         if ((bool) ($input['background'] ?? false)) {
             if ($classification !== Classifier::READ) {
