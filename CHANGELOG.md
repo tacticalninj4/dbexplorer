@@ -48,6 +48,7 @@ Fixed before release, after an independent audit:
 - CSV uploads that libmagic reports as `application/csv` or `text/x-csv` are accepted.
 - A backup whose preflight fails is refused with the real cause instead of being queued to fail.
 - `pg_dump` connects with the connection's SSL settings.
+- `pg_dump` honours a `port` (or host or username) configured as an integer. It used to drop it and connect to 5432, possibly a different server, with the connection's password.
 - An import's run reports `inserted`, `skipped` and `errors` (row number and database message, never cell values).
 
 ### Tests and CI

@@ -67,6 +67,17 @@ it('S20 builds the dump command as an argument array, with the password only in 
         ->and($command)->toContain((string) $config['database']);
 });
 
+it('F40 passes an integer port to pg_dump, not just a string one', function (int|string $port) {
+    config(['database.connections.pgsql_port' => array_merge(DB::connection('pgsql_admin')->getConfig(), ['host' => 'db.internal', 'port' => $port])]);
+
+    $command = (new BackupTool(DB::connection('pgsql_port'), '/usr/bin/pg_dump'))->command();
+    $at = array_search('--port', $command, true);
+
+    expect($at)->not->toBeFalse()
+        ->and($command[$at + 1])->toBe('6543')
+        ->and($command[array_search('--host', $command, true) + 1])->toBe('db.internal');
+})->with(['integer' => [6543], 'string' => ['6543']]);
+
 it('S20 passes the connection\'s SSL settings to pg_dump through the environment, never the arguments', function () {
     config(['database.connections.pgsql_ssl' => array_merge(DB::connection('pgsql_admin')->getConfig(), [
         'sslmode' => 'verify-full',

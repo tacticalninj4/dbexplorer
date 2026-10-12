@@ -45,19 +45,16 @@ final class BackupTool
             }
         }
 
-        if (is_string($config['host'] ?? null) && $config['host'] !== '') {
-            $arguments[] = '--host';
-            $arguments[] = (string) $config['host'];
-        }
+        // Config values may be integers (a port from PHP rather than .env):
+        // dropping one would point pg_dump at the default 5432, possibly
+        // another server, with this connection's password.
+        foreach (['host' => '--host', 'port' => '--port', 'username' => '--username'] as $key => $option) {
+            $value = $config[$key] ?? null;
 
-        if (is_string($config['port'] ?? null) && $config['port'] !== '') {
-            $arguments[] = '--port';
-            $arguments[] = (string) $config['port'];
-        }
-
-        if (is_string($config['username'] ?? null) && $config['username'] !== '') {
-            $arguments[] = '--username';
-            $arguments[] = (string) $config['username'];
+            if ((is_string($value) || is_int($value)) && (string) $value !== '') {
+                $arguments[] = $option;
+                $arguments[] = (string) $value;
+            }
         }
 
         $arguments[] = '--dbname';
