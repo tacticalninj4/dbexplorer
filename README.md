@@ -45,6 +45,8 @@ composer require tacticalninj4/dbexplorer:^1.0
 php artisan dbx:install
 ```
 
+Using an AI agent? With [Laravel Boost](https://laravel.com/docs/boost), `php artisan boost:install` (or `boost:update`) adds this package's `dbexplorer-setup` skill, which walks the agent through the steps below.
+
 `dbx:install` publishes `config/dbexplorer.php` (it won't overwrite an existing one unless you pass `--force`) and prints every remaining step: the `.env` values with a freshly generated audit key, the gate and role stubs, the PostgreSQL role SQL, and the scheduler and queue requirements. It never edits your `.env` or code.
 
 ### 1. Enable it

@@ -76,3 +76,22 @@ it('documents every dbx command in the README, and no others', function () {
 
     expect(readmeTableNames('| Command | What it does |'))->toBe($commands);
 });
+
+it('ships a Boost skill that names only real config keys and commands', function () {
+    $skill = (string) file_get_contents(__DIR__.'/../../resources/boost/skills/dbexplorer-setup/SKILL.md');
+
+    expect($skill)->toStartWith("---\nname: dbexplorer-setup\ndescription: ");
+
+    $config = require __DIR__.'/../../config/dbexplorer.php';
+    preg_match_all('/`((?:limits|backup|storage|audit|queue)\.[a-z_.]+)`/', $skill, $keys);
+
+    foreach ($keys[1] as $key) {
+        expect(data_get($config, $key, 'missing'))->not->toBe('missing', "SKILL.md names `{$key}`");
+    }
+
+    preg_match_all('/\b(dbx:[a-z:]+)/', $skill, $commands);
+
+    foreach (array_unique($commands[1]) as $command) {
+        expect(Artisan::all())->toHaveKey($command);
+    }
+});

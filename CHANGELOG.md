@@ -2,6 +2,10 @@
 
 ## [Unreleased](https://github.com/tacticalninj4/dbexplorer/compare/v1.0.0...main)
 
+### Added
+
+- A Laravel Boost skill, `dbexplorer-setup` (`resources/boost/skills/`), that guides an AI agent through installing, configuring, upgrading and troubleshooting DbExplorer. `php artisan boost:install` or `boost:update` picks it up.
+
 ## [v1.0.0](https://github.com/tacticalninj4/dbexplorer/commits/v1.0.0) - 2026-10-12
 
 The first release: a PostgreSQL explorer, editor and automation package for Laravel 9–13 on PHP 8.0–8.5 and PostgreSQL 12+. No earlier version was tagged; the `v0.1.0` placeholder that used to sit here was never released and is folded into this entry.
