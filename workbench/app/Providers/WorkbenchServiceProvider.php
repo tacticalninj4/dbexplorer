@@ -43,7 +43,7 @@ class WorkbenchServiceProvider extends ServiceProvider
 
         // A pg_dump at least as new as the server, e.g. Homebrew's libpq when
         // Postgres.app's is older than the dbx-pg container.
-        if (is_string($dump = env('DBX_WORKBENCH_PG_DUMP')) && $dump !== '') {
+        if (is_string($dump = getenv('DBX_WORKBENCH_PG_DUMP')) && $dump !== '') {
             $config->set('dbexplorer.backup.pg_dump_path', $dump);
         }
 
