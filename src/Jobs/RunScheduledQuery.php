@@ -167,7 +167,7 @@ final class RunScheduledQuery implements ShouldQueue
         }
 
         Notification::route('mail', $settings['mail'])->notify(
-            new ScheduledQueryFinished((string) $schedule->savedQuery?->name, $status, $rows, $durationMs, $error),
+            new ScheduledQueryFinished((string) ($schedule->name ?? "#{$schedule->id}"), $status, $rows, $durationMs, $error),
         );
     }
 }

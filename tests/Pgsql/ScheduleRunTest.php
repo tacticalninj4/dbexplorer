@@ -250,3 +250,45 @@ it('runs a schedule whose last run failed again on the next due tick', function 
 
     Event::assertDispatchedTimes(ScheduleFailed::class, 2);
 });
+
+it('F38 mails the name approved with the SQL, as plain text: a rename to a Markdown link changes nothing', function () {
+    Notification::fake();
+
+    $saved = SavedQuery::query()->create(['user_id' => '1', 'label' => 'main', 'name' => 'Nightly count', 'sql' => 'SELECT 1']);
+    $schedule = (new Schedule(['user_id' => '1', 'cron' => '* * * * *', 'notify' => ['on' => ['success'], 'mail' => ['ops@example.com']]]))->approve($saved, '1', false, false);
+    $schedule->save();
+
+    // the owner renames the query after the admin approved it
+    $saved->update(['name' => '[Reset password](https://evil.example/reset)']);
+
+    $run = Run::query()->create([
+        'type' => RunScheduledQuery::TYPE,
+        'user_id' => '1',
+        'label' => 'main',
+        'role' => 'admin',
+        'meta' => [Run::USER_PROVIDER => 'users', 'schedule_id' => $schedule->id],
+    ]);
+
+    app()->call([new RunScheduledQuery($run->id), 'handle']);
+
+    $sent = null;
+
+    Notification::assertSentOnDemand(ScheduledQueryFinished::class, function (ScheduledQueryFinished $notification) use (&$sent): bool {
+        $sent = $notification;
+
+        return true;
+    });
+
+    expect($sent->scheduleName)->toBe('Nightly count')
+        ->and($schedule->refresh()->name)->toBe('Nightly count');
+
+    // a malicious name that was approved still renders as text, never a link
+    $html = (string) (new ScheduledQueryFinished('[Reset password](https://evil.example/reset)', 'failed', null, null, '<b>[x](https://evil.example/err)</b>'))
+        ->toMail(null)
+        ->render();
+
+    expect($html)->not->toContain('href="https://evil.example')
+        ->not->toContain('<b>')
+        ->toContain('[Reset password](https://evil.example/reset)')
+        ->toContain('&lt;b&gt;[x](https://evil.example/err)&lt;/b&gt;');
+});

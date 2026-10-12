@@ -210,6 +210,19 @@ it('S11 backfills existing schedules from their saved query, unapproved and disa
         ->assertJsonValidationErrors('enabled');
 });
 
+it('F38 backfills each schedule\'s name from its saved query', function () {
+    Schema::drop('dbx_schedules');
+    (require __DIR__.'/../../database/migrations/2026_10_09_000005_create_dbx_schedules_table.php')->up();
+    (require __DIR__.'/../../database/migrations/2026_10_09_000006_add_sql_snapshot_to_dbx_schedules_table.php')->up();
+
+    $saved = scheduledQuery(['name' => 'Weekly revenue']);
+    DB::table('dbx_schedules')->insert(['saved_query_id' => $saved->id, 'user_id' => '1', 'cron' => '* * * * *', 'enabled' => true]);
+
+    (require __DIR__.'/../../database/migrations/2026_10_09_000007_add_name_to_dbx_schedules_table.php')->up();
+
+    expect(Schedule::query()->sole()->name)->toBe('Weekly revenue');
+});
+
 it('registers dbx:schedule:tick every minute', function () {
     $events = app(ConsoleSchedule::class)->events();
 
@@ -288,14 +301,16 @@ it('S11 snapshots the SQL: editing or hiding the saved query later does not chan
     $this->actingAs(makeUser(2))
         ->withSession(['_token' => 'csrf-test-token'])
         ->withHeaders(['X-CSRF-TOKEN' => 'csrf-test-token'])
-        ->patchJson("/dbexplorer/api/main/queries/{$shared->id}", ['sql' => 'DROP TABLE fixture.posts', 'visibility' => 'private'])
+        ->patchJson("/dbexplorer/api/main/queries/{$shared->id}", ['name' => '[Reset password](https://evil.example/reset)', 'sql' => 'DROP TABLE fixture.posts', 'visibility' => 'private'])
         ->assertOk();
 
     $schedule = Schedule::query()->findOrFail($id);
 
     expect($schedule->sql)->toBe('SELECT count(*) FROM fixture.posts')
+        ->and($schedule->name)->toBe('Nightly count')
         ->and($schedule->isApproved())->toBeTrue()
-        ->and(schedulesAs($this, 'GET', '')->json('data.0.in_sync'))->toBeFalse();
+        ->and(schedulesAs($this, 'GET', '')->json('data.0.in_sync'))->toBeFalse()
+        ->and(schedulesAs($this, 'GET', '')->json('data.0.name'))->toBe('Nightly count');
 
     // the admin can no longer see the now-private query, so can't re-sync it
     schedulesAs($this, 'POST', "/{$id}/resync", ['sql_hash' => reviewedHash('DROP TABLE fixture.posts')])->assertNotFound();
@@ -344,7 +359,7 @@ it('S17 re-syncs a schedule from its saved query for admins only, re-approved by
     $schedule = (new Schedule(['user_id' => '1', 'cron' => '* * * * *']))->approve($saved, '5', false, false);
     $schedule->save();
 
-    $saved->update(['sql' => 'SELECT count(*) FROM fixture.users']);
+    $saved->update(['name' => 'Users count', 'sql' => 'SELECT count(*) FROM fixture.users']);
 
     $reviewed = ['sql_hash' => reviewedHash($saved)];
 
@@ -356,6 +371,7 @@ it('S17 re-syncs a schedule from its saved query for admins only, re-approved by
     $data = schedulesAs($this, 'POST', "/{$schedule->id}/resync", $reviewed)->assertOk()->json('data');
 
     expect($data['sql'])->toBe('SELECT count(*) FROM fixture.users')
+        ->and($data['name'])->toBe('Users count')
         ->and($data['approved_by'])->toBe('1')
         ->and($data['in_sync'])->toBeTrue()
         ->and($schedule->refresh()->sql_hash)->toBe(hash('sha256', 'SELECT count(*) FROM fixture.users'));

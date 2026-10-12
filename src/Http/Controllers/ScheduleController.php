@@ -304,7 +304,8 @@ class ScheduleController
         return [
             'id' => $schedule->id,
             'saved_query_id' => $schedule->saved_query_id,
-            'name' => $schedule->savedQuery?->name,
+            // the name approved with the SQL, as notifications show it
+            'name' => $schedule->name,
             'owner' => $schedule->user_id === $userId,
             'sql' => $schedule->sql,
             'approved' => $schedule->isApproved(),

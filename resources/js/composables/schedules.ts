@@ -13,7 +13,7 @@ export interface NotifySettings {
 export interface Schedule {
     id: number;
     saved_query_id: number;
-    /** The saved query's name, or null when it's gone. */
+    /** The saved query's name as approved with the SQL (what notifications show); null only for a schedule from before names were kept whose saved query was gone. */
     name: string | null;
     /** The current user created the schedule. */
     owner: boolean;

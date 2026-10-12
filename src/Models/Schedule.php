@@ -17,6 +17,7 @@ use TacticalNinj4\DbExplorer\Jobs\RunScheduledQuery;
  * under a cache lock, so overlapping runs are impossible.
  *
  * A schedule runs its own snapshot of the SQL (`sql`, `params`, `sql_hash`),
+ * and names itself by its own copy of the saved query's `name`, both
  * copied from the saved query when an admin approved it (`approved_by`,
  * `approved_at`), never the saved query's current text: `saved_query_id` is
  * provenance only. It runs as the approver, read-only unless the approver
@@ -25,6 +26,7 @@ use TacticalNinj4\DbExplorer\Jobs\RunScheduledQuery;
  * @property int $id
  * @property int $saved_query_id
  * @property string $user_id
+ * @property string|null $name
  * @property string|null $sql
  * @property array<int, mixed>|null $params
  * @property string|null $sql_hash
@@ -82,7 +84,7 @@ final class Schedule extends Model
     }
 
     /**
-     * Copy the saved query's SQL and parameters into the schedule and record
+     * Copy the saved query's name, SQL and parameters into the schedule and record
      * `$userId` as the admin who approved them, with the write and DDL
      * permissions they granted. Unsaved: the caller saves.
      */
@@ -90,6 +92,7 @@ final class Schedule extends Model
     {
         return $this->fill([
             'saved_query_id' => $saved->id,
+            'name' => $saved->name,
             'sql' => $saved->sql,
             'params' => $saved->params,
             'sql_hash' => hash('sha256', $saved->sql),
