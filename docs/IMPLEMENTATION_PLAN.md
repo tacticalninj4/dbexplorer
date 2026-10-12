@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Implements | [PRD.md](PRD.md) v0.1 |
-| Status | M0–M4 implemented through the API; the M3/M4 screens are still to come (README Roadmap) |
+| Status | M0–M4 implemented through the API and the browser UI (README Roadmap) |
 | Last updated | 2026-10-11 |
 
 Each task below is meant to be **one PR**. Tasks inside a milestone are ordered and usually depend on the ones before them. A milestone is done when its exit criteria pass in CI. Then it gets tagged (`v0.1.0-m1`, …) per the `package-release` skill.
@@ -371,7 +371,7 @@ Plain event classes, constructed with public properties (PHP 8.0-safe, no `reado
 - Tests: list, cancel a sleeping backend (pgsql), non-admin gets 403.
 
 ### M4.5 Audit log viewer
-- `GET api/{label}/audit` (admin of `{label}`): paginated, filterable by user, label, action, classification, outcome and date, showing only rows from labels where the user is admin. A read-only page in the SPA (still to come).
+- `GET api/{label}/audit` (admin of `{label}`): paginated, filterable by user, label, action, classification, outcome and date, showing only rows from labels where the user is admin. A read-only page in the SPA (`/:label/audit`).
 
 **M4 exit:** schedules survive overlap and failure, a backup round-trips through a CLI restore, every PRD §6 requirement has a passing test, and v1.0.0 is released.
 

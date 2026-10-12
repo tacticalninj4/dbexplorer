@@ -4,7 +4,9 @@
 
 The first full release, to be tagged 1.0.0 once verification passes: a PostgreSQL explorer, editor and automation package for Laravel 9–13 on PHP 8.0–8.5.
 
-Every feature below works through the JSON API. The browser UI covers M0–M2 and the Runs page; screens for exports, background queries, CSV import, scripts, saved queries, schedules, backups, active sessions, the audit log, and the create-table and create-view forms are still to come.
+Every feature below works through the JSON API and has a screen in the browser UI: saved queries, schedules (approve, resync, `allow_writes`/`allow_ddl`), backups, active sessions, the audit log viewer, export, run in background, CSV import, scripts, the Runs page, create table/view/materialized view, constraint forms and the row-conflict "Overwrite with mine". Altering a column's type, default or nullability runs from the SQL editor or the API.
+
+Known API gaps the screens work around, planned for v1.1: exports don't apply the grid's filters or sort, backups have no format or schema/table options, schedules have no server-computed next run, and the audit API doesn't return the chain hashes.
 
 ### Explorer (M0–M1)
 - Auth-gated, CSP-hardened SPA (assets served from the package, no Node on the host) with per-label connections resolved from an allowlist.

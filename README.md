@@ -13,7 +13,7 @@
 DbExplorer mounts a secure, browser-based PostgreSQL explorer inside your Laravel app. It reuses your app's auth, database connections, queue and scheduler, so there's no separate pgAdmin or phpMyAdmin to deploy, patch and expose.
 
 > [!IMPORTANT]
-> **Not yet released.** Every feature on the [Roadmap](#roadmap) is built and tested through the JSON API. The browser UI covers browsing, the data grid with inline editing, the SQL editor, history, schema forms and the Runs page; screens for exports, background queries, CSV import, scripts, saved queries, schedules, backups, active sessions and the audit log are coming. Until then those work through the API only.
+> **Not yet released.** Every feature on the [Roadmap](#roadmap) is built and tested, through the JSON API and the browser UI. The UI covers browsing, the data grid with inline editing and an explicit "Overwrite with mine" after a save conflict, the SQL editor with run in background and export, history, saved queries, schedules, backups, active sessions, the audit log viewer, CSV import, scripts, the Runs page, and schema forms for create table, view and materialized view, constraints and indexes. Altering a column's type, default or nullability still runs from the SQL editor or the API.
 
 ## Security model
 
@@ -197,9 +197,9 @@ Other publishable resources: `--tag=dbexplorer-migrations`, `dbexplorer-views` a
 |---|---|---|---|
 | M0 | Config, routing, gate, IP allowlist, roles, audit log, app shell, `dbx:install` | Built | Built |
 | M1 | Object browser, read-only data grid and SQL editor, EXPLAIN, history, hidden objects, masking, timeouts and row caps | Built | Built |
-| M2 | Inline row editing, DML and DDL, password re-confirmation for destructive actions | Built | Built, except forms for create table, create view, column type/default/nullability and constraints (API only; DDL also runs from the SQL editor) |
-| M3 | Background queries, exports, CSV import, script runner, signed downloads | Built | Runs page (progress, cancel, download); the rest coming |
-| M4 | Saved and scheduled queries, backups, active sessions, audit log viewer | Built | Coming |
+| M2 | Inline row editing, DML and DDL, password re-confirmation for destructive actions | Built | Built: row editing with conflict overwrite, forms for create table, view and materialized view, columns, indexes and constraints. Column type/default/nullability changes run from the SQL editor |
+| M3 | Background queries, exports, CSV import, script runner, signed downloads | Built | Built: run in background, export dialog, CSV import wizard, scripts, Runs page (progress, cancel, download) |
+| M4 | Saved and scheduled queries, backups, active sessions, audit log viewer | Built | Built |
 
 The full plan is in [docs/PRD.md](docs/PRD.md).
 
