@@ -12,8 +12,8 @@
 
 DbExplorer mounts a secure, browser-based PostgreSQL explorer inside your Laravel app. It reuses your app's auth, database connections, queue and scheduler, so there's no separate pgAdmin or phpMyAdmin to deploy, patch and expose.
 
-> [!IMPORTANT]
-> **Not yet released.** Every feature on the [Roadmap](#roadmap) is built and tested, through the JSON API and the browser UI. The UI covers browsing, the data grid with inline editing and an explicit "Overwrite with mine" after a save conflict, the SQL editor with run in background and export, history, saved queries, schedules, backups, active sessions, the audit log viewer, CSV import, scripts, the Runs page, and schema forms for create table, view and materialized view, constraints and indexes. Altering a column's type, default or nullability still runs from the SQL editor or the API.
+> [!NOTE]
+> **v1.0.0** is the first release. Every feature on the [Roadmap](#roadmap) is built and tested, through the JSON API and the browser UI: browsing, the data grid with inline editing and an explicit "Overwrite with mine" after a save conflict, the SQL editor with run in background and export, history, saved queries, schedules, backups, active sessions, the audit log viewer, CSV import, scripts, the Runs page, and schema forms for create table, view and materialized view, constraints and indexes. Altering a column's type, default or nullability runs from the SQL editor or the API. See the [CHANGELOG](CHANGELOG.md).
 
 ## Security model
 
@@ -41,7 +41,7 @@ Several of these Laravel and PHP versions no longer get upstream security fixes;
 ## Installation
 
 ```bash
-composer require tacticalninj4/dbexplorer
+composer require tacticalninj4/dbexplorer:^1.0
 php artisan dbx:install
 ```
 
@@ -142,9 +142,36 @@ Laravel 9 and 10, in `app/Console/Kernel.php`:
 $schedule->command('dbx:audit:verify')->daily();
 ```
 
-Background queries, exports, imports, scripts, backups and scheduled queries run on the queue (`dbexplorer.queue`), so keep a worker running: `php artisan queue:work`. Better, give them a queue of their own, so a long export never holds up your app's jobs: set `queue.queue` to `'dbexplorer'` and run a worker for it, `php artisan queue:work --queue=dbexplorer`.
+Background queries, exports, imports, scripts, backups and scheduled queries run on the queue (`dbexplorer.queue`), so keep a worker running: `php artisan queue:work`. Better, and recommended, give them a queue of their own, so a long export never holds up your app's jobs:
+
+```php
+// config/dbexplorer.php
+'queue' => [
+    'connection' => null,       // the app's default queue connection
+    'queue' => 'dbexplorer',
+],
+```
+
+```bash
+php artisan queue:work --queue=dbexplorer
+```
+
+Each user may have `limits.background.max_active_per_user` runs (default 3) queued or running per connection label; one more is refused with a 429. A run may take up to `limits.background.timeout` seconds (each job sets that as its own timeout), so give the queue connection a `retry_after` above it; otherwise a second worker picks up a long run while it's still going and fails it.
 
 Then open `/dbexplorer` in your app.
+
+## Upgrading
+
+```bash
+composer update tacticalninj4/dbexplorer
+php artisan migrate
+```
+
+The package loads its migrations itself, so `php artisan migrate` picks up new ones; if you published them (`--tag=dbexplorer-migrations`), publish again first. Read the [CHANGELOG](CHANGELOG.md) for each version's upgrade notes. From a pre-release checkout of `main` to 1.0.0:
+
+- Migration `000006` gives each schedule an approved SQL snapshot and **disables existing schedules** until an admin re-syncs them; migration `000007` snapshots each schedule's name. See [docs/security.md](docs/security.md#6-scheduled-queries).
+- API clients that create or re-sync schedules must send the reviewed `sql_hash`, and should expect a 429 above the run cap.
+- A published `config/dbexplorer.php` keeps working; new keys such as `limits.background.max_active_per_user` fall back to their defaults until you add them.
 
 ## Configuration
 

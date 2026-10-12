@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | Applies to | [PRD.md](PRD.md), [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) |
-| Status | Draft v0.1 |
-| Last updated | 2026-10-11 |
+| Status | Current as of v1.0.0 |
+| Last updated | 2026-10-12 |
 
 ## 1. Principles
 

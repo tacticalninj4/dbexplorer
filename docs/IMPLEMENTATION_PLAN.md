@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| Implements | [PRD.md](PRD.md) v0.1 |
-| Status | M0–M4 implemented through the API and the browser UI (README Roadmap) |
-| Last updated | 2026-10-11 |
+| Implements | [PRD.md](PRD.md) |
+| Status | Complete: M0–M4 implemented through the API and the browser UI, released as v1.0.0 |
+| Last updated | 2026-10-12 |
 
-Each task below is meant to be **one PR**. Tasks inside a milestone are ordered and usually depend on the ones before them. A milestone is done when its exit criteria pass in CI. Then it gets tagged (`v0.1.0-m1`, …) per the `package-release` skill.
+Each task below is meant to be **one PR**. Tasks inside a milestone are ordered and usually depend on the ones before them. A milestone is done when its exit criteria pass in CI. The milestones weren't tagged on their own: v1.0.0, tagged per the `package-release` skill, is the first release.
 
 `S#` refers to the security requirements in PRD §6. Every `S#` gets at least one test, and that test is named after it, e.g. `it('S8 rejects multiple statements')`, so `pest --filter=S8` finds it.
 

@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | Package | `tacticalninj4/dbexplorer` |
-| Status | Draft v0.1 |
-| Last updated | 2026-10-11 |
+| Status | Implemented in v1.0.0 |
+| Last updated | 2026-10-12 |
 | Owner | Jhanarthananraja |
 
 ---
