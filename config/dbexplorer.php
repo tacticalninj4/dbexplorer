@@ -86,7 +86,9 @@ return [
     |
     | Per-role limits for interactive queries: `timeout` is the statement
     | timeout in seconds and `rows` the maximum rows returned. `background`
-    | holds the timeout in seconds for queued jobs (exports, imports, scripts).
+    | holds the timeout in seconds for queued jobs (exports, imports, scripts)
+    | and how many runs one user may have queued or running per connection
+    | label at once (`max_active_per_user`, 0 for no cap): one more is a 429.
     | `queries_per_minute` feeds the `dbexplorer` rate limiter, applied per
     | user (or per IP for guests) to every per-connection API call.
     | `sql_length` caps the characters of SQL the editor may submit.
@@ -97,7 +99,7 @@ return [
         'viewer' => ['timeout' => 30, 'rows' => 1000],
         'editor' => ['timeout' => 60, 'rows' => 5000],
         'admin' => ['timeout' => 120, 'rows' => 10000],
-        'background' => ['timeout' => 3600],
+        'background' => ['timeout' => 3600, 'max_active_per_user' => 3],
         'queries_per_minute' => 60,
         'sql_length' => 100000,
 
@@ -169,7 +171,9 @@ return [
     |--------------------------------------------------------------------------
     |
     | The queue connection and queue name for background work. A null
-    | connection uses the app's default queue connection.
+    | connection uses the app's default queue connection. Recommended: a
+    | queue of its own (e.g. 'dbexplorer') with its own worker, so long
+    | exports or queries never hold up the app's own jobs.
     |
     */
 

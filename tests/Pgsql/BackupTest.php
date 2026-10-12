@@ -394,6 +394,18 @@ it('queues a backup when the preflight passes', function () {
     Queue::assertPushed(Backup::class);
 });
 
+it('F37 refuses a backup past the active-run cap, after the preflight', function () {
+    Queue::fake();
+    config(['dbexplorer.backup.pg_dump_path' => fakePgDump('99.1'), 'dbexplorer.limits.background.max_active_per_user' => 1]);
+
+    createRun(['type' => Backup::TYPE, 'role' => 'admin', 'status' => RunStatus::RUNNING]);
+
+    backupsAs($this, 'POST')->assertStatus(429)->assertJsonPath('message', fn (string $text): bool => str_contains($text, '1 background run queued or running'));
+
+    expect(Run::query()->count())->toBe(1);
+    Queue::assertNothingPushed();
+});
+
 it('answers the backups page for admins only', function (string $role) {
     backupsAs($this, 'GET', 'backups', $role)->assertForbidden();
 })->with(['viewer', 'editor']);

@@ -36,6 +36,8 @@ Every request passes these in order. Each one assumes the ones before it can fai
 | 6 | Query limits | One statement per query via a native prepare, viewer queries in `BEGIN READ ONLY` (always rolled back), a transaction-local `statement_timeout` and a row cap per role, reads streamed through a server-side cursor. After every query the connection runs `DISCARD ALL` and gets its own settings back, so prepared statements, cursors, `SET ROLE` and other session state never reach the next user (it also drops temp tables, so give DbExplorer its own connections). A connection with an open transaction is refused. |
 | 7 | Audit log | Every action is written to an HMAC hash-chained log (§5), optionally forwarded to a log channel. |
 
+**Background work can't take over the host's queue.** The `dbexplorer` rate limiter (`limits.queries_per_minute`) caps API calls per user, and `limits.background.max_active_per_user` (3 by default) caps the runs one user can have queued or running per label: one more background query, export, import, script, background DDL or backup answers 429 and says why. Each run can hold a worker for up to `limits.background.timeout` seconds, so give DbExplorer **its own queue** (`queue.queue = 'dbexplorer'`) with its own worker (`php artisan queue:work --queue=dbexplorer`). Then even work within the caps never holds up the app's own jobs.
+
 ## 3. PostgreSQL roles
 
 `php artisan dbx:install` prints this recipe too. It creates three logins:

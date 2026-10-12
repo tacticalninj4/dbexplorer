@@ -142,7 +142,7 @@ Laravel 9 and 10, in `app/Console/Kernel.php`:
 $schedule->command('dbx:audit:verify')->daily();
 ```
 
-Background queries, exports, imports, scripts, backups and scheduled queries run on the queue (`dbexplorer.queue`), so keep a worker running: `php artisan queue:work`.
+Background queries, exports, imports, scripts, backups and scheduled queries run on the queue (`dbexplorer.queue`), so keep a worker running: `php artisan queue:work`. Better, give them a queue of their own, so a long export never holds up your app's jobs: set `queue.queue` to `'dbexplorer'` and run a worker for it, `php artisan queue:work --queue=dbexplorer`.
 
 Then open `/dbexplorer` in your app.
 
@@ -161,6 +161,7 @@ All keys live in `config/dbexplorer.php`.
 | `limits.{viewer,editor,admin}.timeout` | `30` / `60` / `120` | Statement timeout in seconds per role. |
 | `limits.{viewer,editor,admin}.rows` | `1000` / `5000` / `10000` | Maximum rows returned per role, and the largest grid page. |
 | `limits.background.timeout` | `3600` | Seconds a queued run may take (the job timeout), and the statement timeout of background queries and exports. |
+| `limits.background.max_active_per_user` | `3` | Runs one user may have queued or running at once per connection label (background queries, exports, imports, scripts, background DDL, backups); one more answers 429. `0` turns the cap off. Scheduled runs don't count. |
 | `limits.queries_per_minute` | `60` | The `dbexplorer` rate limiter, per user or per IP, for every per-connection API call. |
 | `limits.sql_length` | `100000` | Maximum characters of SQL the editor may submit. |
 | `limits.import.max_upload_kb` | `51200` | Largest CSV upload, in kilobytes. |
@@ -169,7 +170,7 @@ All keys live in `config/dbexplorer.php`.
 | `hidden` | `pg_toast*`, `*.password_reset*`, `*.personal_access_tokens`, `*.dbx_*`, `dbexplorer.*` | Globs for schemas and `schema.table` names hidden from browsing (404) and, best effort, from queries. The defaults include DbExplorer's own tables. |
 | `masking` | `*.password`, `*.*token*`, `*.*secret*` | Globs (or callables) on `schema.table.column` whose values are masked in grids, edit views and exports. Aliased columns aren't masked; see [docs/security.md](docs/security.md). |
 | `queue.connection` | `null` | Queue connection for runs; null uses the app default. A `sync` connection shows a warning. |
-| `queue.queue` | `'default'` | Queue name for runs. |
+| `queue.queue` | `'default'` | Queue name for runs. Recommended: a dedicated queue such as `'dbexplorer'` with its own worker (`php artisan queue:work --queue=dbexplorer`), so runs can't starve the app's own jobs. |
 | `backup.pg_dump_path` | `'pg_dump'` | The `pg_dump` binary. Its major version must be at least the server's. |
 | `backup.disk` | `'local'` | Private filesystem disk backups are written to. |
 | `backup.keep` | `7` | Backups kept per connection label. |

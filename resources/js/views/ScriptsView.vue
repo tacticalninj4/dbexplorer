@@ -259,7 +259,7 @@ const modKey = isMac ? '⌘' : 'Ctrl';
                     <div v-if="error" role="alert" class="dbx-callout dbx-callout-danger">
                         <BaseIcon name="alert-circle" />
                         <div class="min-w-0">
-                            <p class="font-semibold">{{ error.status === 403 ? 'Not allowed' : error.status === 422 ? 'The script can’t run' : error.status === 429 ? 'Rate limited' : 'The script could not be queued' }}</p>
+                            <p class="font-semibold">{{ error.status === 403 ? 'Not allowed' : error.status === 422 ? 'The script can’t run' : error.status === 429 ? 'Limit reached' : 'The script could not be queued' }}</p>
                             <pre class="mt-1 font-sans break-words whitespace-pre-wrap">{{ error.message }}</pre>
                         </div>
                     </div>

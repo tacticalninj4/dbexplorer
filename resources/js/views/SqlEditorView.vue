@@ -490,7 +490,7 @@ const shiftKey = isMac ? '⇧' : 'Shift';
                         <BaseIcon name="alert-circle" />
                         <div class="min-w-0 flex-1">
                             <p class="flex flex-wrap items-center gap-2">
-                                <span class="font-semibold">{{ run.error.status === 403 ? 'Not allowed' : run.error.status === 429 ? 'Rate limited' : 'Query failed' }}</span>
+                                <span class="font-semibold">{{ run.error.status === 403 ? 'Not allowed' : run.error.status === 429 ? 'Limit reached' : 'Query failed' }}</span>
                                 <span v-if="run.error.sqlstate" class="rounded-sm border border-danger-line px-1.5 font-mono text-xs">SQLSTATE {{ run.error.sqlstate }}</span>
                             </p>
                             <pre class="mt-1 font-sans whitespace-pre-wrap">{{ run.error.message }}</pre>

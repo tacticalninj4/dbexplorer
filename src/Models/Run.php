@@ -6,15 +6,18 @@ namespace TacticalNinj4\DbExplorer\Models;
 
 use Illuminate\Auth\AuthManager;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Date;
 use InvalidArgumentException;
 use TacticalNinj4\DbExplorer\Events\RunFinished;
 use TacticalNinj4\DbExplorer\Facades\DbExplorer;
 use TacticalNinj4\DbExplorer\Http\Middleware\ResolveRole;
+use TacticalNinj4\DbExplorer\Jobs\RunScheduledQuery;
 use TacticalNinj4\DbExplorer\Role;
 
 /**
@@ -92,20 +95,58 @@ class Run extends Model
      * ResolveRole). The auth provider of the request's guard is kept in meta,
      * so the job can load the same user later and re-check their role.
      *
+     * A user may have at most `limits.background.max_active_per_user` runs
+     * queued or running per label (0: no cap); one more is refused with 429,
+     * so one account can't fill the queue the host app shares (F37).
+     * Scheduled runs aren't started by the user, so they don't count.
+     *
      * @param  array<string, mixed>  $meta
      */
     public static function queueFor(Request $request, string $type, array $meta = []): self
     {
         $id = $request->user()?->getAuthIdentifier();
+        $userId = is_scalar($id) ? (string) $id : null;
+        $label = (string) $request->attributes->get(ResolveRole::LABEL);
         $provider = config('auth.guards.'.app(AuthManager::class)->getDefaultDriver().'.provider');
+        $max = (int) config('dbexplorer.limits.background.max_active_per_user', 3);
 
-        return static::query()->create([
+        $queue = fn (): self => static::query()->create([
             'type' => $type,
-            'user_id' => is_scalar($id) ? (string) $id : null,
-            'label' => $request->attributes->get(ResolveRole::LABEL),
+            'user_id' => $userId,
+            'label' => $label,
             'role' => $request->attributes->get(ResolveRole::ROLE),
             'meta' => [self::USER_PROVIDER => is_string($provider) ? $provider : null] + $meta,
         ]);
+
+        if ($max < 1) {
+            return $queue();
+        }
+
+        // Count and insert under one lock per user and label, so a burst of
+        // parallel requests can't all pass the count before any inserts. A
+        // cache lock (as the schedule tick uses) works on every storage
+        // connection, where a row or advisory lock would be driver-specific.
+        try {
+            return Cache::lock('dbx:runs:'.hash('sha256', $label."\0".$userId), 10)->block(5, function () use ($userId, $label, $max, $queue): self {
+                $active = static::query()
+                    ->where('user_id', $userId)
+                    ->where('label', $label)
+                    ->whereIn('status', RunStatus::ACTIVE)
+                    ->where('type', '!=', RunScheduledQuery::TYPE)
+                    ->count();
+
+                abort_if($active >= $max, 429, self::tooManyActive($max));
+
+                return $queue();
+            });
+        } catch (LockTimeoutException) {
+            abort(429, self::tooManyActive($max));
+        }
+    }
+
+    private static function tooManyActive(int $max): string
+    {
+        return "You already have {$max} background ".($max === 1 ? 'run' : 'runs').' queued or running on this connection. Wait for one to finish, or cancel one on the Runs page, then try again.';
     }
 
     /**
