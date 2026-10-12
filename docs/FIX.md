@@ -4,7 +4,7 @@
 |---|---|
 | Verified commit | `2c53133` (main, 2026-10-10) |
 | Sources | Release verifier (test matrix, traceability, docs), independent security audit, end-to-end browser test |
-| Status | 23 fixes **applied** (batches 1–3) + F25 (all) · F24, F27, F33–F35 **applied** · **deferred to v1.1:** F28–F32 · final re-verification: step 1 ✅, step 2 found F36–F41 (open), step 3 pending |
+| Status | 23 fixes **applied** (batches 1–3) + F25 (all) · F24, F27, F33–F35 **applied** · **deferred to v1.1:** F28–F32 · final re-verification: step 1 ✅, step 2 found F36–F40 (open), step 3 pending |
 
 ## How to read this
 
@@ -677,9 +677,6 @@ No critical or high findings.
 |---|---|---|---|
 | a | `BackupTool::command` drops a port configured as an integer, so `pg_dump` falls back to 5432. On a host with several clusters that's a **different server**, and it receives the admin password. | Cast scalar config values to strings, and add a test with an integer port | The admin password should never reach a server other than the one that was configured |
 | b | SQL editor and Scripts tabs are saved in `localStorage` under keys with the label but not the user, and they survive logout. On a shared browser, the next user sees the SQL text, including any literals. | Include the user id in the key, and clear DbExplorer's keys when a 401/419 sends the user back to login | SQL can contain secrets as literals, and browser storage outlives the session |
-
-### F41 — Hardening notes · NOT STARTED
-The auditor didn't write the security-audit skill's report files, as intended, since the step is read-only.
 
 ## 5. Environment notes (no code fix)
 
