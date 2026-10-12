@@ -180,6 +180,17 @@ function pairedPgRestore(): ?string
 }
 
 /**
+ * The major version $binary (pg_dump or pg_restore) reports, 0 when it can't be run.
+ */
+function pgToolMajor(string $binary): int
+{
+    $process = new Process([$binary, '--version']);
+    $process->run();
+
+    return preg_match('/(\d+)(?:\.\d+)*/', $process->getOutput(), $m) === 1 ? (int) $m[1] : 0;
+}
+
+/**
  * Row count and an md5 of the ordered contents of each scratch table, on $connection.
  *
  * @return array<string, array{0: int, 1: string}>
@@ -212,6 +223,16 @@ it('round-trips a backup: the dump restores with pg_restore into a fresh databas
 
     if ($restore === null || ! is_executable($restore)) {
         $this->markTestSkipped('no pg_restore next to '.DB_DUMP_PATH);
+    }
+
+    // pg_restore 17+ sends SET transaction_timeout, a setting servers before
+    // 17 don't have, so with --exit-on-error the restore stops at once. That
+    // is a client/server version mismatch, not a bad dump: skip, don't fail.
+    $restoreMajor = pgToolMajor($restore);
+    $serverMajor = intdiv((int) DB::connection('pgsql_admin')->selectOne('SHOW server_version_num')->server_version_num, 10000);
+
+    if ($restoreMajor >= 17 && $serverMajor < 17) {
+        $this->markTestSkipped("pg_restore {$restoreMajor} sends SET transaction_timeout, which PostgreSQL {$serverMajor} rejects; the round-trip needs a pg_restore 16 or older next to pg_dump");
     }
 
     $schema = $this->scratchSchema();
