@@ -4,7 +4,7 @@
 |---|---|
 | Verified commit | `2c53133` (main, 2026-10-10) |
 | Sources | Release verifier (test matrix, traceability, docs), independent security audit, end-to-end browser test |
-| Status | 23 fixes **applied** (batches 1–3) + F25 (all) · F24, F27, F33–F35 **applied** · **deferred to v1.1:** F28–F32 · final re-verification: step 1 ✅, step 2 found F36–F40 (open), step 3 pending |
+| Status | 23 fixes **applied** (batches 1–3) + F25 (all) · F24, F27, F33–F35 **applied** · F36–F40 **applied** on branch `fix-f36-f40` (dist `801d351`), awaiting merge · **deferred to v1.1:** F28–F32 · final re-verification: step 1 ✅, step 2 found F36–F40 (now fixed), step 3 pending |
 
 ## How to read this
 
@@ -614,7 +614,7 @@ No critical or high findings.
 - every job resets its session and re-checks the role
 - no leaks in any response
 
-### F36 — MEDIUM — A schedule approval isn't tied to the SQL the admin reviewed (F1 variant) · NOT STARTED
+### F36 — MEDIUM — A schedule approval isn't tied to the SQL the admin reviewed (F1 variant) · APPLIED `f8aa170`
 **Evidence.**
 - `ScheduleController::store` and `resync` copy the saved query's SQL as it is *at request time*.
 - The UI's create dialog and resync diff show the copy loaded with the page.
@@ -630,7 +630,13 @@ No critical or high findings.
 - Approval only means something if it binds to exactly what was reviewed. That's the same principle as F1: an approver signs off on specific SQL.
 - A hash from the client is the standard optimistic check, the same pattern as the row editor's 409.
 
-### F37 — MEDIUM — Any viewer can flood the background queue, including the host app's queue · NOT STARTED
+**Applied.**
+- `POST schedules` and `POST schedules/{id}/resync` **require** `sql_hash` (a lowercase sha256), so a client can't skip the check: missing or malformed is a 422.
+- In one transaction the server locks the saved query's row (`lockForUpdate`), compares the hash with its current SQL, and answers 409 "the saved query changed" with nothing approved or audited. The lock keeps an edit from landing between the check and the copy. The hash check runs before the classification checks, which would otherwise describe SQL the admin never saw.
+- The saved queries API returns `sql_hash`. The create dialog and the re-sync diff send it; on 409 they reload the saved queries and show the current SQL, or the new diff, to review again.
+- Tests: the proof of concept for create and re-sync (409, no schedule, snapshot unchanged, no audit row), approving the new hash afterwards, and missing, empty, malformed, upper-case and non-string hashes.
+
+### F37 — MEDIUM — Any viewer can flood the background queue, including the host app's queue · APPLIED `d09f761`
 **Evidence.**
 - There's no limit on queued or running runs per user. The only brake is the 60-a-minute rate limit.
 - `queue.connection` defaults to the host's default queue.
@@ -647,7 +653,13 @@ No critical or high findings.
 - A cap per user stops one account from monopolising it.
 - A dedicated queue isolates the blast radius even when the caps allow work.
 
-### F38 — LOW — A viewer can put a phishing link in schedule emails · NOT STARTED
+**Applied.**
+- `limits.background.max_active_per_user`, default 3, with `0` turning it off. It's enforced in `Run::queueFor`, which every user-initiated run goes through: background queries and saved-query runs, exports, imports, scripts, background DDL and backups. Above the cap the request gets a 429 whose message names the cap. Scheduled runs are created by the tick and don't count. No global per-label cap.
+- The count and the insert run under a cache lock per user and label, the same mechanism as the schedule tick's lock, so a burst of parallel requests can't all pass the count. It works on any storage connection, where a row or advisory lock would be driver-specific. If the lock can't be had within 5 s, that's a 429 too.
+- README (config table and worker section) and docs/security.md §2 document the cap and recommend `queue.queue = 'dbexplorer'` with its own worker. The SQL editor and Scripts screens title a 429 "Limit reached" and show the server's message.
+- Tests: three endpoints up to the cap then a 429 with nothing queued; which runs count (other types do; finished runs, scheduled runs, other users and other labels don't); a finished run frees a slot; the config value and `0`; a backup past the cap.
+
+### F38 — LOW — A viewer can put a phishing link in schedule emails · APPLIED `5376b35`
 **Evidence.**
 - `ScheduledQueryFinished` puts the saved query's *live* name into the email subject and a Markdown line.
 - Any owner can rename the query to `[Reset password](https://evil)` without triggering a resync.
@@ -661,7 +673,12 @@ No critical or high findings.
 - An email arriving from the company's own system is trusted.
 - User-controlled text in it must not become a link, and must not change after an admin approved the schedule.
 
-### F39 — LOW — Cancel doesn't stop a backup (F2 gap) · NOT STARTED
+**Applied.**
+- Migration `000007` adds `dbx_schedules.name` and fills it from each saved query's current name. `Schedule::approve()` copies the name along with the SQL on create and re-sync, and the job and the schedules API use that copy.
+- `ScheduledQueryFinished` Markdown-escapes the name and the error and folds them onto one line. The mail template already escapes HTML.
+- Tests: a rename to `[Reset password](https://evil.example/reset)` after approval is mailed under the approved name; the rendered mail for a malicious name and error has no `href` and shows the text literally (this test fails without the escaping); the backfill.
+
+### F39 — LOW — Cancel doesn't stop a backup (F2 gap) · APPLIED `9e4624c`
 **Evidence.**
 - `Jobs/Backup.php` waits on the `pg_dump` process without ever checking for cancel.
 - `pg_cancel_backend` hits PHP's idle connection, not `pg_dump`, so the dump runs on and the run can end "succeeded".
@@ -672,11 +689,26 @@ No critical or high findings.
 
 **Reasoning.** Cancel has to work on every run type, or users stop trusting it. A partial dump left behind would also look like a valid backup.
 
-### F40 — LOW — Two smaller issues · NOT STARTED
+**Applied.**
+- `BackupTool::start()` starts `pg_dump` without waiting. The job polls every 0.5 s for the cancel flag and the process timeout.
+- On cancel it calls `$process->stop(5)`, sending SIGTERM and then SIGKILL, and throws `RunCancelled`. A cancelled or timed-out dump's file is deleted.
+- Tests: a real queue worker runs a fake `pg_dump` that writes a partial file and hangs. A cancel through the API ends the run cancelled within seconds, with the file gone, the process gone and `run.cancel` + `run.cancelled` audited. This test fails without the fix.
+
+### F40 — LOW — Two smaller issues · APPLIED `606d640` (a), `c576621` (b)
 | # | Issue | Proposed fix | Reasoning |
 |---|---|---|---|
 | a | `BackupTool::command` drops a port configured as an integer, so `pg_dump` falls back to 5432. On a host with several clusters that's a **different server**, and it receives the admin password. | Cast scalar config values to strings, and add a test with an integer port | The admin password should never reach a server other than the one that was configured |
 | b | SQL editor and Scripts tabs are saved in `localStorage` under keys with the label but not the user, and they survive logout. On a shared browser, the next user sees the SQL text, including any literals. | Include the user id in the key, and clear DbExplorer's keys when a 401/419 sends the user back to login | SQL can contain secrets as literals, and browser storage outlives the session |
+
+**Applied.**
+- **a:** `command()` passes `host`, `port` and `username` when they're strings or integers. Tested with an integer port and a string port.
+- **b:** The shell passes `user.storageKey`, the first 16 hex digits of an HMAC of the user id under the app key. That way the raw id never appears in the page or in key names. Keys are now `dbexplorer:u:<storageKey>:…`. A 401/419 clears every `dbexplorer:` key before the reload, and blocks a debounced save that is still pending. Label-only keys from before are deleted on load. The SPA has no logout of its own: the host's logout ends the session, and the next API call answers 401/419. Tested: the key is in the shell config and differs per user.
+
+**Verification (branch `fix-f36-f40`).**
+- `composer test` (L13 / PHP 8.4 / Pest 5, Postgres 18): PHPStan, Pint, 100% type coverage, 1436 passed.
+- pgsql group, run serially on Postgres 18: 517 passed.
+- L9 / PHP 8.0 prefer-lowest (Laravel 9.47.0, Pest 1) on Postgres 12.22, clean install with no lock file: full suite 1430 passed, 2 skipped. The skips are the real dump and restore tests, because the image has no `pg_dump`.
+- Frontend: lint and typecheck pass, and `dist/` is rebuilt byte-identical.
 
 ## 5. Environment notes (no code fix)
 
