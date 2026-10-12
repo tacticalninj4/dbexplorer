@@ -129,3 +129,49 @@ function createRun(array $attributes = []): Run
         'meta' => [Run::USER_PROVIDER => 'users'],
     ]);
 }
+
+/**
+ * For the "about 1 MB" performance tests: how many times longer $run takes
+ * on $input($count) than on $input($count / 10), the large input's time in
+ * seconds (each the best of three tries), and $run's result on it.
+ *
+ * A fixed wall-clock bound flaked on a loaded machine (2.7 s for work that
+ * takes 0.3 s idle). The ratio is what proves linear time (linear work gives
+ * about 10, quadratic about 100), and it's measured in the process's own CPU
+ * time, which waiting for a busy CPU doesn't inflate. Windows' CPU clock is
+ * too coarse (15.6 ms) for the small input, so it uses wall time.
+ *
+ * @template T
+ *
+ * @param  callable(string): T  $run
+ * @param  callable(int): string  $input
+ * @return array{0: float, 1: float, 2: T}
+ */
+function linearScaling(callable $run, callable $input, int $count): array
+{
+    $clock = PHP_OS_FAMILY === 'Windows'
+        ? fn (): float => hrtime(true) / 1e9
+        : function (): float {
+            $usage = getrusage();
+
+            return $usage['ru_utime.tv_sec'] + $usage['ru_stime.tv_sec'] + ($usage['ru_utime.tv_usec'] + $usage['ru_stime.tv_usec']) / 1e6;
+        };
+
+    $best = function (string $sql) use ($run, $clock): array {
+        $seconds = INF;
+        $result = null;
+
+        for ($try = 0; $try < 3; $try++) {
+            $started = $clock();
+            $result = $run($sql);
+            $seconds = min($seconds, $clock() - $started);
+        }
+
+        return [$seconds, $result];
+    };
+
+    [$small] = $best($input(intdiv($count, 10)));
+    [$large, $result] = $best($input($count));
+
+    return [$large / max($small, 1e-6), $large, $result];
+}

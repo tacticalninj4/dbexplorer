@@ -93,7 +93,7 @@ it('S8 rejects multiple statements with 422 and runs none of them', function (st
 it('S10 answers a query over the role timeout with 422 and SQLSTATE 57014', function () {
     config(['dbexplorer.limits.viewer.timeout' => 1]);
 
-    queryAs($this, 'viewer', ['sql' => 'SELECT pg_sleep(3)'])->assertStatus(422)->assertJsonPath('error.sqlstate', '57014');
+    queryAs($this, 'viewer', ['sql' => 'SELECT pg_sleep(30)'])->assertStatus(422)->assertJsonPath('error.sqlstate', '57014');
 });
 
 it('reports the error position in the submitted SQL', function () {

@@ -233,14 +233,16 @@ it('returns no statements for empty or comment-only input', function () {
         ->and(Classifier::statements("-- a\n/* b */ ;"))->toBe([]);
 });
 
-it('classifies about 1 MB of SQL in under a second', function () {
-    $sql = str_repeat("INSERT INTO t (a, b) VALUES (1, 'x''y'), (2, E'z\\'q'); -- note\nSELECT * FROM t WHERE a = \$1 AND b::text = :name /* c */;\n", 9000)
+it('classifies about 1 MB of SQL in linear time', function () {
+    $input = fn (int $n): string => str_repeat("INSERT INTO t (a, b) VALUES (1, 'x''y'), (2, E'z\\'q'); -- note\nSELECT * FROM t WHERE a = \$1 AND b::text = :name /* c */;\n", $n)
         .'DELETE FROM t';
 
-    $started = microtime(true);
-    $class = Classifier::classify($sql);
+    [$ratio, $seconds, $class] = linearScaling(fn (string $sql): string => Classifier::classify($sql), $input, 9000);
 
-    expect(strlen($sql))->toBeGreaterThan(1_000_000)
+    // 10x the input: ~10x the time if linear, ~100x if quadratic. The
+    // absolute bound only catches a pathological slowdown (0.3 s idle).
+    expect(strlen($input(9000)))->toBeGreaterThan(1_000_000)
         ->and($class)->toBe(Classifier::DESTRUCTIVE)
-        ->and(microtime(true) - $started)->toBeLessThan(1.0);
+        ->and($ratio)->toBeLessThan(30.0)
+        ->and($seconds)->toBeLessThan(5.0);
 });

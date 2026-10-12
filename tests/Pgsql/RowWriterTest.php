@@ -565,7 +565,7 @@ it('atomic() refuses a connection with an open transaction and applies the role 
     $failure = null;
 
     try {
-        $runner->atomic('pgsql_editor', 'editor', fn (Closure $statement): array => $statement('SELECT pg_sleep(3)', []));
+        $runner->atomic('pgsql_editor', 'editor', fn (Closure $statement): array => $statement('SELECT pg_sleep(30)', []));
     } catch (QueryFailed $e) {
         $failure = $e;
     }

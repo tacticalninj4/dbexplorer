@@ -176,13 +176,15 @@ it('S9 rolls back session settings a viewer changes', function () {
 });
 
 it('S10 cancels a statement that runs past the role timeout', function () {
+    // A 1 s timeout against a 30 s sleep: the outcome can't flip under load,
+    // and finishing in well under 30 s proves the server cancelled it.
     config(['dbexplorer.limits.viewer.timeout' => 1]);
     $started = microtime(true);
 
-    $e = runFailure('pgsql_viewer', 'SELECT pg_sleep(5)', 'viewer');
+    $e = runFailure('pgsql_viewer', 'SELECT pg_sleep(30)', 'viewer');
 
     expect($e?->sqlState)->toBe('57014')
-        ->and(microtime(true) - $started)->toBeLessThan(4.0)
+        ->and(microtime(true) - $started)->toBeLessThan(20.0)
         ->and(AuditEntry::query()->sole()->outcome)->toBe('error');
 
     expectClean('pgsql_viewer');

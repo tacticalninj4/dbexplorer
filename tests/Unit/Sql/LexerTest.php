@@ -160,15 +160,23 @@ it('flags whitespace and comments as trivia', function () {
 });
 
 it('lexes about 1 MB in linear time', function () {
-    $sql = str_repeat("SELECT 'a''b', \$\$x\$\$, \"c\" /* d */ -- e\n;", 26000);
-    $count = 0;
-    $started = microtime(true);
+    $input = fn (int $n): string => str_repeat("SELECT 'a''b', \$\$x\$\$, \"c\" /* d */ -- e\n;", $n);
+    $count = function (string $sql): int {
+        $count = 0;
 
-    foreach (Lexer::tokens($sql) as $token) {
-        $count++;
-    }
+        foreach (Lexer::tokens($sql) as $token) {
+            $count++;
+        }
 
-    expect(strlen($sql))->toBeGreaterThan(1_000_000)
-        ->and($count)->toBe(26000 * 15)
-        ->and(microtime(true) - $started)->toBeLessThan(1.0);
+        return $count;
+    };
+
+    [$ratio, $seconds, $tokens] = linearScaling($count, $input, 26000);
+
+    // 10x the input: ~10x the time if linear, ~100x if quadratic. The
+    // absolute bound only catches a pathological slowdown (0.1 s idle).
+    expect(strlen($input(26000)))->toBeGreaterThan(1_000_000)
+        ->and($tokens)->toBe(26000 * 15)
+        ->and($ratio)->toBeLessThan(30.0)
+        ->and($seconds)->toBeLessThan(5.0);
 });

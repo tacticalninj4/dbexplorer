@@ -188,15 +188,18 @@ it('reports multibyte positions as characters and offsets as bytes', function ()
         ->and($e->position)->toBe(21);
 });
 
-it('splits about 1 MB of SQL in under a second', function () {
-    $sql = str_repeat("INSERT INTO t (a, b) VALUES (1, 'x''y;'), (2, E'z\\';q'); -- note;\nSELECT \$\$a;b\$\$, \"c;d\" FROM t /* ; */ WHERE a = \$1;\n", 9000)
+it('splits about 1 MB of SQL in linear time', function () {
+    $input = fn (int $n): string => str_repeat("INSERT INTO t (a, b) VALUES (1, 'x''y;'), (2, E'z\\';q'); -- note;\nSELECT \$\$a;b\$\$, \"c;d\" FROM t /* ; */ WHERE a = \$1;\n", $n)
         .'DELETE FROM t';
+    $sql = $input(9000);
 
-    $started = microtime(true);
-    $statements = ScriptSplitter::split($sql);
+    [$ratio, $seconds, $statements] = linearScaling(fn (string $sql): array => ScriptSplitter::split($sql), $input, 9000);
 
+    // 10x the input: ~10x the time if linear, ~100x if quadratic. The
+    // absolute bound only catches a pathological slowdown (0.25 s idle).
     expect(strlen($sql))->toBeGreaterThan(1_000_000)
         ->and($statements)->toHaveCount(18001)
         ->and($statements[18000])->toBe(['sql' => 'DELETE FROM t', 'offset' => strlen($sql) - 13, 'line' => 18001])
-        ->and(microtime(true) - $started)->toBeLessThan(1.0);
+        ->and($ratio)->toBeLessThan(30.0)
+        ->and($seconds)->toBeLessThan(5.0);
 });

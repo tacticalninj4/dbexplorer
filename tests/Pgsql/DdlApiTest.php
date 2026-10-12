@@ -456,7 +456,7 @@ it('runs statement lists in one transaction with the role timeout and leaves the
     try {
         app(QueryRunner::class)->runStatements('pgsql_admin', [
             "CREATE TABLE {$this->schema}.first (id int)",
-            'SELECT pg_sleep(3)',
+            'SELECT pg_sleep(30)',
         ], 'admin', ['label' => 'main']);
     } catch (QueryFailed $e) {
         $failure = $e;
