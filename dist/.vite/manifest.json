@@ -6,8 +6,8 @@
       "_api-MFY8en_x.js"
     ]
   },
-  "_ConfirmDialog-CEb9g93u.js": {
-    "file": "assets/ConfirmDialog-CEb9g93u.js",
+  "_ConfirmDialog-DQv407CP.js": {
+    "file": "assets/ConfirmDialog-DQv407CP.js",
     "name": "ConfirmDialog",
     "imports": [
       "_api-MFY8en_x.js",
@@ -15,8 +15,8 @@
       "resources/js/app.ts"
     ]
   },
-  "_ConstraintFields-BXjRyvR1.js": {
-    "file": "assets/ConstraintFields-BXjRyvR1.js",
+  "_ConstraintFields-B0pjXH23.js": {
+    "file": "assets/ConstraintFields-B0pjXH23.js",
     "name": "ConstraintFields",
     "imports": [
       "_api-MFY8en_x.js",
@@ -32,11 +32,11 @@
       "_BaseBadge-DIecJ2aR.js"
     ]
   },
-  "_SaveQueryDialog-CsG8Pv1S.js": {
-    "file": "assets/SaveQueryDialog-CsG8Pv1S.js",
+  "_SaveQueryDialog-B7zROZWn.js": {
+    "file": "assets/SaveQueryDialog-B7zROZWn.js",
     "name": "SaveQueryDialog",
     "imports": [
-      "_SqlCodeEditor-CQSAVjk3.js",
+      "_SqlCodeEditor-CaLUvoXj.js",
       "_api-MFY8en_x.js",
       "_runtime-dom.esm-bundler-DX2z9xdj.js",
       "_EmptyState-DPUeogU_.js",
@@ -45,8 +45,8 @@
       "_savedQueries-C_55qCEX.js"
     ]
   },
-  "_SqlCodeEditor-CQSAVjk3.js": {
-    "file": "assets/SqlCodeEditor-CQSAVjk3.js",
+  "_SqlCodeEditor-CaLUvoXj.js": {
+    "file": "assets/SqlCodeEditor-CaLUvoXj.js",
     "name": "SqlCodeEditor",
     "imports": [
       "_api-MFY8en_x.js",
@@ -71,17 +71,17 @@
       "_api-MFY8en_x.js"
     ]
   },
-  "_statements-C6KvZcsi.js": {
-    "file": "assets/statements-C6KvZcsi.js",
+  "_statements-D8je4SlD.js": {
+    "file": "assets/statements-D8je4SlD.js",
     "name": "statements",
     "imports": [
       "_api-MFY8en_x.js",
       "resources/js/app.ts",
-      "_ConfirmDialog-CEb9g93u.js"
+      "_ConfirmDialog-DQv407CP.js"
     ]
   },
   "resources/js/app.ts": {
-    "file": "assets/app-BD3Z8Ib2.js",
+    "file": "assets/app-P44bgfix.js",
     "name": "app",
     "src": "resources/js/app.ts",
     "isEntry": true,
@@ -110,7 +110,7 @@
     ]
   },
   "resources/js/components/ConstraintForm.vue": {
-    "file": "assets/ConstraintForm-CF85Xp8q.js",
+    "file": "assets/ConstraintForm-rC5Vpw9R.js",
     "name": "ConstraintForm",
     "src": "resources/js/components/ConstraintForm.vue",
     "isDynamicEntry": true,
@@ -119,11 +119,11 @@
       "_runtime-dom.esm-bundler-DX2z9xdj.js",
       "_BaseBadge-DIecJ2aR.js",
       "resources/js/app.ts",
-      "_ConstraintFields-BXjRyvR1.js"
+      "_ConstraintFields-B0pjXH23.js"
     ]
   },
   "resources/js/components/CreateTableForm.vue": {
-    "file": "assets/CreateTableForm-B2Z0W_cF.js",
+    "file": "assets/CreateTableForm-DYe1truC.js",
     "name": "CreateTableForm",
     "src": "resources/js/components/CreateTableForm.vue",
     "isDynamicEntry": true,
@@ -132,11 +132,11 @@
       "_runtime-dom.esm-bundler-DX2z9xdj.js",
       "_BaseBadge-DIecJ2aR.js",
       "resources/js/app.ts",
-      "_ConstraintFields-BXjRyvR1.js"
+      "_ConstraintFields-B0pjXH23.js"
     ]
   },
   "resources/js/components/CreateViewForm.vue": {
-    "file": "assets/CreateViewForm-DeQCVrGJ.js",
+    "file": "assets/CreateViewForm-k4sizoNq.js",
     "name": "CreateViewForm",
     "src": "resources/js/components/CreateViewForm.vue",
     "isDynamicEntry": true,
@@ -147,11 +147,11 @@
       "resources/js/app.ts"
     ],
     "dynamicImports": [
-      "_SqlCodeEditor-CQSAVjk3.js"
+      "_SqlCodeEditor-CaLUvoXj.js"
     ]
   },
   "resources/js/components/RefreshMatviewForm.vue": {
-    "file": "assets/RefreshMatviewForm-CRqq1rCa.js",
+    "file": "assets/RefreshMatviewForm-0BnnjrHw.js",
     "name": "RefreshMatviewForm",
     "src": "resources/js/components/RefreshMatviewForm.vue",
     "isDynamicEntry": true,
@@ -163,7 +163,7 @@
     ]
   },
   "resources/js/views/AuditView.vue": {
-    "file": "assets/AuditView-Bs3BS4xm.js",
+    "file": "assets/AuditView-C5Ej1MgU.js",
     "name": "AuditView",
     "src": "resources/js/views/AuditView.vue",
     "isDynamicEntry": true,
@@ -179,7 +179,7 @@
     ]
   },
   "resources/js/views/BackupsView.vue": {
-    "file": "assets/BackupsView-Bb2JONSP.js",
+    "file": "assets/BackupsView-CYy1_OtE.js",
     "name": "BackupsView",
     "src": "resources/js/views/BackupsView.vue",
     "isDynamicEntry": true,
@@ -191,7 +191,7 @@
     ]
   },
   "resources/js/views/ImportView.vue": {
-    "file": "assets/ImportView-COEfXJ71.js",
+    "file": "assets/ImportView-H2BvXnMy.js",
     "name": "ImportView",
     "src": "resources/js/views/ImportView.vue",
     "isDynamicEntry": true,
@@ -204,7 +204,7 @@
     ]
   },
   "resources/js/views/SavedQueriesView.vue": {
-    "file": "assets/SavedQueriesView-DxHpMKF5.js",
+    "file": "assets/SavedQueriesView-HslYJThv.js",
     "name": "SavedQueriesView",
     "src": "resources/js/views/SavedQueriesView.vue",
     "isDynamicEntry": true,
@@ -214,13 +214,13 @@
       "_EmptyState-DPUeogU_.js",
       "_BaseBadge-DIecJ2aR.js",
       "resources/js/app.ts",
-      "_ConfirmDialog-CEb9g93u.js",
-      "_SaveQueryDialog-CsG8Pv1S.js",
+      "_ConfirmDialog-DQv407CP.js",
+      "_SaveQueryDialog-B7zROZWn.js",
       "_savedQueries-C_55qCEX.js"
     ]
   },
   "resources/js/views/SchedulesView.vue": {
-    "file": "assets/SchedulesView-BkUluvm8.js",
+    "file": "assets/SchedulesView-BVO01F9N.js",
     "name": "SchedulesView",
     "src": "resources/js/views/SchedulesView.vue",
     "isDynamicEntry": true,
@@ -230,26 +230,26 @@
       "_EmptyState-DPUeogU_.js",
       "_BaseBadge-DIecJ2aR.js",
       "resources/js/app.ts",
-      "_ConfirmDialog-CEb9g93u.js",
+      "_ConfirmDialog-DQv407CP.js",
       "_savedQueries-C_55qCEX.js"
     ]
   },
   "resources/js/views/ScriptsView.vue": {
-    "file": "assets/ScriptsView-5kfsL9uk.js",
+    "file": "assets/ScriptsView-CsbXLsnA.js",
     "name": "ScriptsView",
     "src": "resources/js/views/ScriptsView.vue",
     "isDynamicEntry": true,
     "imports": [
-      "_SqlCodeEditor-CQSAVjk3.js",
+      "_SqlCodeEditor-CaLUvoXj.js",
       "_api-MFY8en_x.js",
       "_EmptyState-DPUeogU_.js",
       "_BaseBadge-DIecJ2aR.js",
       "resources/js/app.ts",
-      "_statements-C6KvZcsi.js"
+      "_statements-D8je4SlD.js"
     ]
   },
   "resources/js/views/SessionsView.vue": {
-    "file": "assets/SessionsView-B--ETru5.js",
+    "file": "assets/SessionsView-Br3ucfr4.js",
     "name": "SessionsView",
     "src": "resources/js/views/SessionsView.vue",
     "isDynamicEntry": true,
@@ -259,23 +259,23 @@
       "_EmptyState-DPUeogU_.js",
       "_BaseBadge-DIecJ2aR.js",
       "resources/js/app.ts",
-      "_ConfirmDialog-CEb9g93u.js"
+      "_ConfirmDialog-DQv407CP.js"
     ]
   },
   "resources/js/views/SqlEditorView.vue": {
-    "file": "assets/SqlEditorView-DDotx6qo.js",
+    "file": "assets/SqlEditorView-CWU3OvIR.js",
     "name": "SqlEditorView",
     "src": "resources/js/views/SqlEditorView.vue",
     "isDynamicEntry": true,
     "imports": [
-      "_SqlCodeEditor-CQSAVjk3.js",
+      "_SqlCodeEditor-CaLUvoXj.js",
       "_api-MFY8en_x.js",
       "_runtime-dom.esm-bundler-DX2z9xdj.js",
       "_EmptyState-DPUeogU_.js",
       "_BaseBadge-DIecJ2aR.js",
       "resources/js/app.ts",
-      "_SaveQueryDialog-CsG8Pv1S.js",
-      "_statements-C6KvZcsi.js"
+      "_SaveQueryDialog-B7zROZWn.js",
+      "_statements-D8je4SlD.js"
     ]
   }
 }
