@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| Verified commit | `2c53133` (main, 2026-10-10) |
+| Verified commit | `2c53133` (main, 2026-10-10); re-verified in three steps up to `63aee24` (2026-10-12) |
 | Sources | Release verifier (test matrix, traceability, docs), independent security audit, end-to-end browser test |
-| Status | 23 fixes **applied** (batches 1–3) + F25 (all) · F24, F27, F33–F35 **applied** · F36–F40 **applied** on branch `fix-f36-f40` (dist `801d351`), awaiting merge · **deferred to v1.1:** F28–F32 · final re-verification: step 1 ✅, step 2 found F36–F40 (now fixed), step 3 ✅ (branch `verify-step3`): F42–F43 **applied** on branch `fix-f42-f43` (dist `09f7976`), F41 proposed, F44 info |
+| Status | All fixes F1–F27 and F33–F43 **applied** and merged into `main`, except F41 (**applied** on branch `release-1.0.0`, `db3cae4`, dist `be90bd2`) · **deferred to v1.1:** F28–F32 · F44 info only · final re-verification steps 1–3 ✅ · v1.0.0 release prep on branch `release-1.0.0` (not tagged) · next: step 4, CI on `main` |
 
 ## How to read this
 
@@ -744,12 +744,28 @@ Run in Chrome (Claude in Chrome) against `composer serve` on `main` at `47703ba`
 
 Screenshots and GIFs are in `~/Downloads/dbx-step3/`.
 
-### F41 — LOW (UX) — A viewer is asked to confirm writes it can never run · NOT STARTED
+### F41 — LOW (UX) — A viewer is asked to confirm writes it can never run · APPLIED `db3cae4` (dist `be90bd2`)
 **Evidence.** A viewer running `UPDATE …` in the SQL editor, or a write saved query, gets the "Change rows?" dialog with "Run DML". After confirming, the database answers `permission denied` (42501). For DDL the server answers 403 "Only admins can run DDL" up front. (`viewer-dml-confirm-then-42501.jpg`.)
 
 **Proposed fix.** In `QueryController::run` and `SavedQueryController::run`, return 403 "Viewers can only run read queries" when the role is viewer and the classification isn't `read`, before the 409 confirmation. That's the same shape as the DDL check. The database stays the boundary for anything the classifier reads as `read` (S9 and S11 bypass tests are unchanged).
 
 **Reasoning.** Asking someone to confirm an action they can't take is misleading, and the editor's DDL path already behaves the right way. It's a product call (the current behaviour is safe), so it's written up, not applied.
+
+**Decision (user).** Fix it with a 403 up front, for what the classifier marks as a write (DML).
+
+**Applied.**
+- `Classifier::isDml()` mirrors `isDdl()`: any statement that is `dml` (`INSERT`, `UPDATE`/`DELETE` with WHERE, `MERGE`, `CALL`, `SELECT … FOR UPDATE|SHARE`, `COPY … FROM STDIN`, a writable CTE, `EXPLAIN ANALYZE` of those) or destructive DML (`UPDATE`/`DELETE` without WHERE).
+- `POST api/{label}/query` and `POST api/{label}/queries/{id}/run` answer a viewer's DML with 403 "Viewers can't change data (INSERT, UPDATE, DELETE, MERGE, CALL, SELECT ... FOR UPDATE).", before the background branch, the 409 and the 423. Nothing runs, nothing is queued, and no `query` audit row is written, exactly like the DDL refusal. `unknown` SQL (e.g. `LOCK`, `SET`) still goes through the 409 ladder, as does an `explain` request (EXPLAIN plans only; EXPLAIN ANALYZE of DML is still refused by the viewer's read-only transaction). Scripts, imports and row writes were already editor-only.
+- Not a security check (S11): a viewer's `SELECT fixture.sneaky()` reads as `read`, passes, and is refused by the read-only transaction (25006). docs/security.md §4 and PRD §7.3 say so.
+- UI: the SPA classifies nothing, so the 403 surfaces as the SQL editor's "Not allowed" callout with the server's message; the confirmation dialog never opens. The editor's and Saved queries' empty states tell a viewer that writes are refused, and the Saved queries error callout now has a "Not allowed" / "Limit reached" title (closes F44a).
+- Tests: viewer INSERT/UPDATE/DELETE (with and without `confirm`), destructive DML (also with a fresh password confirmation), a writable CTE, MERGE and `SELECT … FOR UPDATE` → 403 with the message, on a viewer login that has write grants, rows unchanged, no `query` audit row; background → 403, nothing queued; saved query → 403 for plain, confirmed and background runs; the editor still gets the 409 and runs after confirming; a viewer SELECT runs; a viewer `LOCK` still gets the 409. `CALL` of a DDL procedure moved to the S11 runner-bypass test for the viewer's database answer. Unit: `isDml()` table.
+
+**Verification.**
+- `composer test` (L13 / PHP 8.4 / Pest 5, Postgres 18): PHPStan, Pint, 100% type coverage, 1471 passed.
+- pgsql group, serially on Postgres 18: 531 passed.
+- L9 / PHP 8.0.30 prefer-lowest (Laravel 9.47.0, Pest 1) on Postgres 12, clean install with no lock file (`dbx-verify-php80`): full suite 1465 passed, 2 skipped (the real dump and restore tests: the image has no `pg_dump`).
+- Frontend: lint and typecheck pass; `dist/` rebuilt (`be90bd2`).
+- **Not covered:** a browser re-check of the new message, and the Windows lane.
 
 ### F42 — LOW — Scripts showed the wrong statement text when several shared a line · APPLIED `0d6c892`
 **Evidence.** `INSERT …; UPDATE …; DELETE …` on one line listed the INSERT text three times in the per-statement results. The server returns only each statement's start line, and the screen matched by line.
@@ -766,7 +782,7 @@ Screenshots and GIFs are in `~/Downloads/dbx-step3/`.
 ### F44 — INFO — Smaller observations (no change)
 | # | Observation | Note |
 |---|---|---|
-| a | The Saved queries screen shows the F37 cap message without the "Limit reached" title used by the SQL editor and Scripts | Cosmetic. That screen titles no errors. |
+| a | The Saved queries screen shows the F37 cap message without the "Limit reached" title used by the SQL editor and Scripts | Cosmetic. Fixed with F41: that screen now titles 403 and 429. |
 | b | The schedule mail's plain-text part shows the escaped name (`\[Reset password\]\(…\)`) | The price of F38's escaping. The HTML part reads cleanly. |
 | c | Backups have no Cancel of their own; a running backup is cancelled from the Runs page | Already listed under F32 (`BackupsView` doesn't use `RunPanel`). |
 | d | While a query runs, the SQL editor toolbar wraps and "History" drops to a second row (seen at 1512 px) | Cosmetic. |
@@ -799,8 +815,10 @@ The verifier confirmed these are pinned by `GAP:` tests and documented in docs/s
 - **S22:** deleting the newest audit rows goes undetected if `dbx_audit_head` is rewritten too. Forwarding to a log channel (S19) closes that.
 
 ## 7. Next steps (awaiting your go-ahead)
-1. ~~Batch 2 (F13–F16, F26)~~: merged into `main` at `4183940`. Next: finish F18 and F19 from `wt-b3`.
+1. ~~Batch 2 (F13–F16, F26)~~: merged into `main` at `4183940`.
 2. ~~F18, F19, F21–F23 (batch 3)~~: merged into `main` at `a1f63ea`.
-3. ~~UI polish and batch 4 (F24, F25)~~: merged into `main`.
-3. Commit your UI work, then do F24 and F25 (screens).
-4. Run the full verification again (the same three checks) before any tag.
+3. ~~UI polish and batch 4 (F24, F25), F27, F33–F35~~: merged into `main`.
+4. ~~Final verification steps 1–3, F36–F40, F42–F43~~: merged into `main` (`63aee24`).
+5. ~~F41 and v1.0.0 release prep~~: on branch `release-1.0.0` (not merged, not tagged). CHANGELOG `v1.0.0 - 2026-10-12` (the untagged `v0.1.0` stub folded in), README status, install, upgrade and queue sections, PRD/plan/TESTING status lines, `docs/RELEASE_NOTES_1.0.0.md` for the GitHub release body.
+6. **Final verification step 4 — CI matrix:** merge `release-1.0.0` into `main` and push `main`. The `tests` workflow runs the full matrix (Laravel 9–13, PHP 8.0–8.5, Postgres 12 and 18, Windows, the `dist/` check); all lanes must be green.
+7. **Tag and release (you):** on the green `main` commit, `git tag -a v1.0.0 -m "v1.0.0"` and `git push origin v1.0.0`, then publish a GitHub release from that tag **named exactly `v1.0.0`**, with the body from `docs/RELEASE_NOTES_1.0.0.md`. On publish, `update-changelog.yml` finds the existing `## [v1.0.0]` heading, warns and leaves CHANGELOG.md alone. A release named anything else (e.g. `1.0.0`) would add a second 1.0.0 section to CHANGELOG.md on `main`. Packagist picks up the tag through its GitHub hook (or "Update" on packagist.org if the package isn't hooked yet).
