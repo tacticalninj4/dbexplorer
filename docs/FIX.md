@@ -4,7 +4,7 @@
 |---|---|
 | Verified commit | `2c53133` (main, 2026-10-10) |
 | Sources | Release verifier (test matrix, traceability, docs), independent security audit, end-to-end browser test |
-| Status | 23 fixes **applied** (batches 1–3) + F25 (all) · F24, F27, F33–F35 **applied** · **deferred to v1.1:** F28–F32 · final re-verification: step 1 ✅, steps 2–3 pending |
+| Status | 23 fixes **applied** (batches 1–3) + F25 (all) · F24, F27, F33–F35 **applied** · **deferred to v1.1:** F28–F32 · final re-verification: step 1 ✅, step 2 found F36–F41 (open), step 3 pending |
 
 ## How to read this
 
@@ -596,6 +596,90 @@ The full Laravel 9–13 matrix last ran at `4183940`, and batch 3 adds only test
 - **Frontend:** checks pass, with a byte-identical `dist/`.
 - **Coverage:** every S1–S22 has its tests, all five events have no-leak tests, and F25c, F25d and F27 are tested.
 - **Docs:** they describe the batch 4 screens as built (`649369f`).
+
+## 4b. Final verification — step 2 (security audit, `115ee7a`, 2026-10-12)
+No critical or high findings.
+
+**Previous fixes:**
+- **F1** holds against a saved-query edit, a non-admin resync, IDs from another label, approver demotion, allow flags set without a password, and backfilled rows. The one bypass is the race in F36.
+- **F2** holds for queries, exports, imports, scripts and scheduled runs. Backups aren't covered; see F39.
+- **F3–F8** hold.
+- **F9** holds, apart from F40a.
+
+**Verified solid:**
+- authorization on every route
+- `overwrite` and `defaults` don't bypass any check
+- destructive DDL hits the 423 before anything is queued
+- no `v-html` or `innerHTML`, a nonce-only CSP, CSRF on every call
+- every job resets its session and re-checks the role
+- no leaks in any response
+
+### F36 — MEDIUM — A schedule approval isn't tied to the SQL the admin reviewed (F1 variant) · NOT STARTED
+**Evidence.**
+- `ScheduleController::store` and `resync` copy the saved query's SQL as it is *at request time*.
+- The UI's create dialog and resync diff show the copy loaded with the page.
+- If the owner, a viewer or editor, edits the saved query between page load and approval, the admin approves SQL they never saw. That's possible with `allow_writes` too, and the query then runs as the admin.
+- **Proof of concept:** the admin reviewed `DELETE FROM fixture.posts WHERE id = -2`. The schedule approved `DELETE FROM dbx_audit_log WHERE true`.
+
+**Proposed fix.**
+- The client sends the `sql_hash` it showed with create and with resync.
+- The server compares it with the saved query's current hash under the same transaction, and returns 409 "the saved query changed; review again" when they differ.
+- The UI re-fetches the query and shows the new diff.
+
+**Reasoning.**
+- Approval only means something if it binds to exactly what was reviewed. That's the same principle as F1: an approver signs off on specific SQL.
+- A hash from the client is the standard optimistic check, the same pattern as the row editor's 409.
+
+### F37 — MEDIUM — Any viewer can flood the background queue, including the host app's queue · NOT STARTED
+**Evidence.**
+- There's no limit on queued or running runs per user. The only brake is the 60-a-minute rate limit.
+- `queue.connection` defaults to the host's default queue.
+- Each run can hold a worker for up to `background.timeout` (3600 s).
+- **Proof of concept:** one viewer queued 50 `pg_sleep` runs. That starves the host app's own jobs, and big exports can fill the disk.
+
+**Proposed fix.**
+- A per-user, per-label cap on active runs (queued plus running). Default 3, configurable as `limits.background.max_active_per_user`. Above it, return 429 with a clear message.
+- Optionally, a global cap per label.
+- Document a **dedicated queue** as the recommended setup (`queue.queue = dbexplorer`, with its own worker).
+
+**Reasoning.**
+- A database explorer must not be able to take down the host application. The host's queue is a shared resource.
+- A cap per user stops one account from monopolising it.
+- A dedicated queue isolates the blast radius even when the caps allow work.
+
+### F38 — LOW — A viewer can put a phishing link in schedule emails · NOT STARTED
+**Evidence.**
+- `ScheduledQueryFinished` puts the saved query's *live* name into the email subject and a Markdown line.
+- Any owner can rename the query to `[Reset password](https://evil)` without triggering a resync.
+- **Proof of concept:** the rendered email contains `href="https://evil.example/reset"`.
+
+**Proposed fix.**
+- Snapshot the name with the SQL at approval time, as in F1/F36.
+- Escape Markdown in every user-supplied string in notifications, or render those strings as plain text.
+
+**Reasoning.**
+- An email arriving from the company's own system is trusted.
+- User-controlled text in it must not become a link, and must not change after an admin approved the schedule.
+
+### F39 — LOW — Cancel doesn't stop a backup (F2 gap) · NOT STARTED
+**Evidence.**
+- `Jobs/Backup.php` waits on the `pg_dump` process without ever checking for cancel.
+- `pg_cancel_backend` hits PHP's idle connection, not `pg_dump`, so the dump runs on and the run can end "succeeded".
+
+**Proposed fix.**
+- Run the process with a loop that checks for cancel.
+- On cancel, call `$process->stop()`, which ends `pg_dump` and its backend, delete the partial file, and mark the run cancelled.
+
+**Reasoning.** Cancel has to work on every run type, or users stop trusting it. A partial dump left behind would also look like a valid backup.
+
+### F40 — LOW — Two smaller issues · NOT STARTED
+| # | Issue | Proposed fix | Reasoning |
+|---|---|---|---|
+| a | `BackupTool::command` drops a port configured as an integer, so `pg_dump` falls back to 5432. On a host with several clusters that's a **different server**, and it receives the admin password. | Cast scalar config values to strings, and add a test with an integer port | The admin password should never reach a server other than the one that was configured |
+| b | SQL editor and Scripts tabs are saved in `localStorage` under keys with the label but not the user, and they survive logout. On a shared browser, the next user sees the SQL text, including any literals. | Include the user id in the key, and clear DbExplorer's keys when a 401/419 sends the user back to login | SQL can contain secrets as literals, and browser storage outlives the session |
+
+### F41 — Hardening notes · NOT STARTED
+The auditor didn't write the security-audit skill's report files, as intended, since the step is read-only.
 
 ## 5. Environment notes (no code fix)
 
