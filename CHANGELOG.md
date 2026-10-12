@@ -1,6 +1,8 @@
 # Release Notes
 
-## [Unreleased](https://github.com/tacticalninj4/dbexplorer/compare/v1.0.0...main)
+## [Unreleased](https://github.com/tacticalninj4/dbexplorer/compare/v1.0.1...main)
+
+## [v1.0.1](https://github.com/tacticalninj4/dbexplorer/compare/v1.0.0...v1.0.1) - 2026-10-12
 
 ### Added
 
