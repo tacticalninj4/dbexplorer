@@ -260,4 +260,6 @@ Please review [our security policy](.github/SECURITY.md) on how to report securi
 
 ## License
 
-DbExplorer is open-sourced software licensed under the [MIT license](LICENSE.md).
+DbExplorer is dual-licensed: free under the [GNU AGPL v3.0](LICENSE.md), or under a commercial license for use without the AGPL's conditions, such as in closed-source products. See [LICENSING.md](LICENSING.md) for which one you need and how to get a commercial license.
+
+Versions v1.0.0 to v1.0.2 were released under the MIT license and remain available under it.

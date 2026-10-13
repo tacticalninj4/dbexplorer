@@ -8,7 +8,10 @@
         "dbexplorer"
     ],
     "homepage": "https://github.com/tacticalninj4/dbexplorer",
-    "license": "MIT",
+    "license": [
+        "AGPL-3.0-only",
+        "proprietary"
+    ],
     "authors": [
         {
             "name": "Jhanarthananraja",

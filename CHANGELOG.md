@@ -2,6 +2,10 @@
 
 ## [Unreleased](https://github.com/tacticalninj4/dbexplorer/compare/v1.0.2...main)
 
+### Changed
+
+- **License:** DbExplorer is now dual-licensed under the **AGPL-3.0-only** or a **commercial license** (see [LICENSING.md](LICENSING.md)), instead of MIT. Versions v1.0.0 to v1.0.2 remain available under MIT. Contributions are accepted under the terms in the contributing guide.
+
 ## [v1.0.2](https://github.com/tacticalninj4/dbexplorer/compare/v1.0.1...v1.0.2) - 2026-10-12
 
 ### Fixed
